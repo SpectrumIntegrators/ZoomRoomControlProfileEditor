@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp -r \"D:/Programming Projects/zoom-native-room-controls-preview/src/assets/zoom_icons/dark\" \"D:/Programming Projects/ZoomRoomControlProfileEditor/src/assets/zoom_icons/\")",
+      "Bash(cp -r \"D:/Programming Projects/zoom-native-room-controls-preview/src/assets/zoom_icons/light\" \"D:/Programming Projects/ZoomRoomControlProfileEditor/src/assets/zoom_icons/\")",
+      "Bash(cp \"D:/Programming Projects/zoom-native-room-controls-preview/src/assets/example.json\" \"D:/Programming Projects/ZoomRoomControlProfileEditor/src/assets/example.json\")",
+      "Bash(cp \"D:/Programming Projects/zoom-native-room-controls-preview/src/schemas/zrcs-profile.schema.json\" \"D:/Programming Projects/ZoomRoomControlProfileEditor/src/schemas/zrcs-profile.schema.json\")",
+      "Bash(cp \"D:/Programming Projects/zoom-native-room-controls-preview/public/favicon.ico\" \"D:/Programming Projects/ZoomRoomControlProfileEditor/public/favicon.ico\")",
+      "Bash(curl -sS \"http://127.0.0.1:5173/src/views/HomeView.vue\")"
+    ]
+  }
+}

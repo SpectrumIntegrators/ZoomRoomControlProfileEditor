@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+        "target": "esnext",
+        "module": "esnext",
+        "baseUrl": "./",
+        "moduleResolution": "bundler",
+        "paths": {
+            "@/*": ["src/*"]
+        },
+        "lib": ["esnext", "dom", "dom.iterable"],
+        "jsx": "preserve"
+    },
+    "include": ["src/**/*", "vite.config.js"]
+}
