@@ -1,6 +1,5 @@
 import Ajv from 'ajv';
 import { schemaState } from './schemaLoader';
-import { ZOOM_EVENTS_BY_ID } from '@/data/zoomEvents';
 
 let cachedSchema = null;
 let cachedValidator = null;
@@ -181,49 +180,6 @@ function runCrossRefValidation(json) {
     return errors;
 }
 
-function collectCustomEventNames(json) {
-    // Response filters fire user-defined event names which then key into
-    // `rules`. Treat any trigger_event found in response_filters as a valid
-    // rule key, even if it's not in the built-in catalog.
-    if (!Array.isArray(json.response_filters)) return new Set();
-    return new Set(
-        json.response_filters
-            .map((filter) => filter && filter.trigger_event)
-            .filter((name) => typeof name === 'string' && name.length > 0)
-    );
-}
-
-function suggestEventName(unknownName) {
-    // Common typo: omitting the `zr_` prefix. If `zr_<unknownName>` exists in
-    // the catalog, recommend it.
-    const prefixed = 'zr_' + unknownName;
-    if (ZOOM_EVENTS_BY_ID[prefixed]) return prefixed;
-    return null;
-}
-
-function runEventValidation(json) {
-    if (!json.rules || typeof json.rules !== 'object') return [];
-
-    const customEvents = collectCustomEventNames(json);
-    const errors = [];
-
-    for (const event of Object.keys(json.rules)) {
-        if (event === '$comment') continue;
-        if (ZOOM_EVENTS_BY_ID[event]) continue;
-        if (customEvents.has(event)) continue;
-
-        const suggestion = suggestEventName(event);
-        const tail = suggestion ? ` Did you mean '${suggestion}'?` : '';
-        errors.push({
-            source: 'event-name',
-            path: `/rules/${event}`,
-            message: `Rule '${event}' is not a known Zoom event and is not produced by any response_filter.${tail}`,
-        });
-    }
-
-    return errors;
-}
-
 function runQuirkValidation(rawText, json) {
     const errors = [];
 
@@ -259,11 +215,6 @@ export function validateProfile(rawText, json) {
     const crossRefErrors = runCrossRefValidation(json);
     if (crossRefErrors.length > 0) {
         return { ok: false, errors: crossRefErrors };
-    }
-
-    const eventErrors = runEventValidation(json);
-    if (eventErrors.length > 0) {
-        return { ok: false, errors: eventErrors };
     }
 
     const quirkErrors = runQuirkValidation(rawText, json);

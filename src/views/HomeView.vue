@@ -21,9 +21,39 @@
                     :size="rightColSizes[0]"
                     :min-size="25">
                     <div id="preview">
+                        <div class="preview-sticky-header">
+                            <div class="preview-toolbar">
+                                <label class="show-hidden-toggle">
+                                    <input
+                                        type="checkbox"
+                                        v-model="showHidden" />
+                                    <span>Show hidden controls (testing only)</span>
+                                </label>
+                            </div>
+                            <div
+                                v-if="showHidden && hasHiddenContent"
+                                class="preview-banner">
+                                Show hidden controls is for testing only. Hidden
+                                controls are not able to be made visible from a Zoom
+                                Rooms control interface.
+                            </div>
+                        </div>
+                        <div
+                            v-if="calculatedControls && calculatedControls.eventOnly && !showHidden"
+                            class="event-only-placeholder">
+                            <p class="title">Event-only mode</p>
+                            <p>
+                                This profile sets
+                                <code>zr_event_only=true</code>. The Native Room
+                                Controls UI is hidden in Zoom Rooms; only the event
+                                rules will run. Enable "Show hidden controls" above to
+                                preview what's defined.
+                            </p>
+                        </div>
                         <div
                             id="zoom-controls"
-                            v-if="calculatedControls != null">
+                            :class="{ 'event-only-shown': calculatedControls && calculatedControls.eventOnly }"
+                            v-if="calculatedControls != null && shouldRenderControls">
                             <div
                                 class="scenes-section"
                                 v-if="calculatedControls.scenes && calculatedControls.scenes.length > 0">
@@ -132,8 +162,13 @@
                                             v-for="(method, mi) in port.methods"
                                             :key="mi">
                                             <div
-                                                v-if="method.visible == true"
-                                                class="method">
+                                                v-if="!method.rolledUp && (method.visible || showHidden)"
+                                                class="method"
+                                                :class="{
+                                                    'hidden-control':
+                                                        !method.visible &&
+                                                        !(calculatedControls && calculatedControls.eventOnly),
+                                                }">
                                                 <div class="method-label">
                                                     <span
                                                         v-if="method.icon && method.icon.startsWith('mdi:')"
@@ -200,7 +235,7 @@
                             </template>
                         </div>
                         <div
-                            v-else
+                            v-else-if="calculatedControls == null"
                             id="json-invalid">
                             <h1>Error</h1>
                             <p>{{ errorMessage }}</p>
@@ -340,6 +375,7 @@ export default {
         target: '',
         commands: [],
         scenesExpanded: false,
+        showHidden: false,
         outerSizes: loadSizes('outer', [35, 65]),
         rightColSizes: loadSizes('right-col', [70, 30]),
         bottomRowSizes: loadSizes('bottom-row', [65, 35]),
@@ -409,6 +445,29 @@ export default {
         },
     },
     computed: {
+        hasHiddenContent() {
+            const ctrl = this.calculatedControls;
+            if (!ctrl) return false;
+            if (ctrl.eventOnly) return true;
+            for (const adapter of ctrl.adapters || []) {
+                for (const port of adapter.ports || []) {
+                    for (const method of port.methods || []) {
+                        // Rolled-up main_methods aren't truly hidden — they
+                        // render in the port header.
+                        if (!method.visible && !method.rolledUp) return true;
+                    }
+                }
+            }
+            return false;
+        },
+        shouldRenderControls() {
+            const ctrl = this.calculatedControls;
+            if (!ctrl) return false;
+            // event-only profiles suppress the whole UI in real Zoom; mirror
+            // that here unless the testing toggle is on.
+            if (ctrl.eventOnly && !this.showHidden) return false;
+            return true;
+        },
         visibleScenes() {
             if (!this.calculatedControls || !this.calculatedControls.scenes) return [];
             const scenes = this.calculatedControls.scenes;
@@ -472,6 +531,82 @@ $zoom-button-height: 58px;
     justify-content: flex-start;
     overflow: auto;
     padding: 0.5rem 0.5rem 0.5rem 0.5rem;
+    gap: 0.5rem;
+
+    .preview-sticky-header {
+        align-self: stretch;
+        position: sticky;
+        // Stick at -0.5rem so the header pins itself to the preview's border
+        // edge rather than its padding edge — otherwise scrolled content peeks
+        // through the 0.5rem padding gap above the header.
+        top: -0.5rem;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        background: c.$background;
+        // Bleed sideways/upward into the preview's padding so the background
+        // covers the full pane width and the top edge.
+        margin: -0.5rem -0.5rem 0;
+        padding: 0.5rem 0.5rem 0.5rem;
+    }
+
+    .preview-toolbar {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0 4px;
+
+        .show-hidden-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.85rem;
+            color: c.$text-dark;
+            opacity: 0.8;
+            cursor: pointer;
+            user-select: none;
+
+            input[type='checkbox'] {
+                cursor: pointer;
+            }
+        }
+    }
+
+    .preview-banner {
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+        color: #78350f;
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        line-height: 1.4;
+    }
+
+    .event-only-placeholder {
+        align-self: stretch;
+        background: #fff;
+        border: 1px dashed c.$border;
+        border-radius: 8px;
+        padding: 1.5rem;
+        color: c.$text-dark;
+        font-size: 0.95rem;
+        line-height: 1.5;
+
+        .title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+            background: #f4f4f5;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+    }
 
     #json-invalid {
         width: 100%;
@@ -493,6 +628,17 @@ $zoom-button-height: 58px;
         gap: 1rem;
         width: $zoom-panel-width;
         flex-shrink: 0;
+
+        // When zr_event_only=true is set and the user has chosen to peek, the
+        // whole UI is "hidden" in production — dash + dim the container to
+        // make that clear.
+        &.event-only-shown {
+            outline: 2px dashed c.$border;
+            outline-offset: -2px;
+            opacity: 0.7;
+            padding: 8px;
+            border-radius: 12px;
+        }
 
         .section-label {
             font-size: 16px;
@@ -599,6 +745,28 @@ $zoom-button-height: 58px;
                 align-items: flex-start;
                 justify-content: space-between;
                 gap: 1rem;
+
+                &.hidden-control {
+                    opacity: 0.55;
+                    position: relative;
+
+                    // Pseudo-element so the dashed marker can have its own
+                    // inset/extents independent of the row's flex layout.
+                    // Extends slightly past the row edges into the port's
+                    // horizontal padding, with a comfortable vertical inset
+                    // so it doesn't crowd the dividers above/below.
+                    &::before {
+                        content: '';
+                        position: absolute;
+                        top: 10px;
+                        bottom: 10px;
+                        left: -10px;
+                        right: -10px;
+                        border: 1px dashed c.$border;
+                        border-radius: 6px;
+                        pointer-events: none;
+                    }
+                }
             }
 
             .method-label {

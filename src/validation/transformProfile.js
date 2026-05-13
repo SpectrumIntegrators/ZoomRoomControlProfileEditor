@@ -105,7 +105,15 @@ function applyVisibility(json) {
             port.showOnlyMainMethod = Boolean(port.main_method && port.methods.length === 1);
 
             port.methods.forEach((method) => {
-                if (port.main_method && method.id === port.main_method.id) {
+                // `rolledUp` means the method is the port's main_method and
+                // already appears in the port header — it should never render
+                // as a row in the methods list, even when "Show hidden
+                // controls" is on. `visible: false` from this branch is just a
+                // courtesy fallback; the renderer keys off `rolledUp` directly.
+                method.rolledUp = Boolean(
+                    port.main_method && method.id === port.main_method.id
+                );
+                if (method.rolledUp) {
                     method.visible = false;
                 }
                 if (method.visible !== false) {
@@ -150,10 +158,20 @@ function resolveRules(json) {
         }));
 }
 
+function detectEventOnly(json) {
+    // `zr_event_only=true` is a special token in the `styles` array (not a
+    // dot-notation style) that tells Zoom Rooms to suppress the entire Native
+    // Room Controls UI. We expose it on the transformed profile so the preview
+    // can render an explanatory placeholder instead of blank space.
+    json.eventOnly =
+        Array.isArray(json.styles) && json.styles.includes('zr_event_only=true');
+}
+
 export function transformProfile(json) {
     applyITachIP2CCMethods(json);
     applyStyles(json);
     applyVisibility(json);
+    detectEventOnly(json);
     resolveScenes(json);
     resolveRules(json);
     return json;
