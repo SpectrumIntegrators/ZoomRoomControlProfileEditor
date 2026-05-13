@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://spectrumintegrators.com/schemas/zrcs-profile.schema.json",
   "title": "Zoom Room Control Profile",
-  "description": "Schema for Zoom Room Control System (ZRCS) profile JSON files. Defines adapters (iTach IP2SL, iTach IP2CC, GenericNetworkAdapter), scenes, automation rules, UI styles, and response filters.",
+  "description": "Schema for Zoom Room Control System (ZRCS) profile JSON files. Defines adapters (iTach IP2SL, iTach IP2CC, GenericNetworkAdapter, USB2Serial), scenes, automation rules, UI styles, and response filters.",
   "type": "object",
   "required": [
     "adapters"
@@ -16,8 +16,8 @@
     },
     "info": {
       "type": "object",
-      "description": "Optional metadata header. Ignored by Zoom Rooms \u2014 purely for human/tooling reference.",
-      "additionalProperties": false,
+      "description": "Optional metadata header. Ignored by Zoom Rooms \u2014 purely for human/tooling reference. The listed properties are common conventions surfaced for autocomplete; users may add or omit any keys they like.",
+      "additionalProperties": true,
       "properties": {
         "customer": {
           "type": "string",
@@ -122,9 +122,10 @@
           "enum": [
             "iTachIP2SL",
             "iTachIP2CC",
-            "GenericNetworkAdapter"
+            "GenericNetworkAdapter",
+            "USB2Serial"
           ],
-          "description": "Adapter hardware model. iTachIP2SL = Global Cache iTach IP-to-Serial. iTachIP2CC = iTach IP-to-Contact-Closure (relays). GenericNetworkAdapter = arbitrary TCP/UDP socket device."
+          "description": "Adapter hardware model. iTachIP2SL = Global Cache iTach IP-to-Serial. iTachIP2CC = iTach IP-to-Contact-Closure (relays). GenericNetworkAdapter = arbitrary TCP/UDP socket device. USB2Serial = USB-to-serial adapter attached to the Zoom Room PC, addressed by COM port."
         },
         "ip": {
           "type": "string",
@@ -133,6 +134,11 @@
         "uuid": {
           "type": "string",
           "description": "iTach beacon UUID (e.g. 'GlobalCache_000C1E051AEE'). Used for auto-discovery via UDP multicast when 'ip' is not provided."
+        },
+        "com": {
+          "type": "string",
+          "description": "USB2Serial port identifier on the Zoom Room host. Windows: 'COM<n>' (e.g. 'COM3'). macOS: a '/dev/cu.*' device path (e.g. '/dev/cu.PL2303G-USBtoUART2110' — find via 'ls -al /dev/cu.*'). Required for USB2Serial adapters; not used by other models.",
+          "pattern": "^(COM[0-9]+|/dev/[A-Za-z0-9._-]+)$"
         },
         "ports": {
           "type": "array",
@@ -156,6 +162,11 @@
           "required": [
             "uuid"
           ]
+        },
+        {
+          "required": [
+            "com"
+          ]
         }
       ],
       "allOf": [
@@ -178,7 +189,12 @@
                     "id",
                     "settings",
                     "methods"
-                  ]
+                  ],
+                  "properties": {
+                    "settings": {
+                      "$ref": "#/definitions/iTachSerialSettings"
+                    }
+                  }
                 }
               }
             }
@@ -231,6 +247,39 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "model": {
+                "const": "USB2Serial"
+              }
+            },
+            "required": [
+              "model"
+            ]
+          },
+          "then": {
+            "required": [
+              "com"
+            ],
+            "properties": {
+              "ports": {
+                "items": {
+                  "required": [
+                    "id",
+                    "settings",
+                    "methods"
+                  ],
+                  "properties": {
+                    "settings": {
+                      "$ref": "#/definitions/usbSerialSettings"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -243,6 +292,128 @@
       "type": "string",
       "description": "GenericNetworkAdapter URL of the form 'tcp://<host>:<port>' or 'udp://<host>:<port>'. Host may be a private IPv4 address (RFC 1918), the limited broadcast address 255.255.255.255 (used for UDP broadcasts like Wake-on-LAN), or a hostname \u2014 Zoom Rooms supports all three in current software versions per the published docs and observed behavior. Anything else that looks like a numeric IP must fall in a private range; public IPs are rejected by Zoom (ZRCSErrorCode_IP_Is_Public). Port must be in the range 1-65535.",
       "pattern": "^(tcp|udp)://(10\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|172\\.(1[6-9]|2[0-9]|3[01])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|192\\.168\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|255\\.255\\.255\\.255|(?![0-9.]+:)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*):(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3})$"
+    },
+    "iTachSerialSettings": {
+      "type": "object",
+      "description": "Serial settings for an iTachIP2SL port. Uses Zoom's string-coded values (distinct from USB2Serial's integer-coded values).",
+      "required": [
+        "baud_rate",
+        "flow_control",
+        "parity"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "baud_rate": {
+          "type": "string",
+          "enum": [
+            "300",
+            "1200",
+            "2400",
+            "4800",
+            "9600",
+            "19200",
+            "38400",
+            "57600",
+            "115200"
+          ]
+        },
+        "flow_control": {
+          "type": "string",
+          "enum": [
+            "FLOW_NONE",
+            "FLOW_HARDWARE"
+          ]
+        },
+        "parity": {
+          "type": "string",
+          "enum": [
+            "PARITY_NO",
+            "PARITY_ODD",
+            "PARITY_EVEN"
+          ]
+        },
+        "$comment": {
+          "type": "string",
+          "description": "Optional inline comment for documentation. Ignored by Zoom Rooms and by the schema validator — purely human-facing."
+        }
+      }
+    },
+    "usbSerialSettings": {
+      "type": "object",
+      "description": "Serial settings for a USB2Serial port. Uses integer-coded values per Zoom's USB2Serial reference profile (distinct from iTachIP2SL's string enums).",
+      "required": [
+        "baud_rate",
+        "data_bits",
+        "parity",
+        "stop_bits",
+        "flow_control"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "baud_rate": {
+          "type": "integer",
+          "description": "Bit rate. Standard values per Zoom's reference profile: 300, 600, 1200, 1800, 2400, 4800, 7200, 9600, 14400, 19200, 28800, 38400, 115200, 230400. Other integer values are accepted but will be treated as 'customized' by Zoom Rooms.",
+          "enum": [
+            300,
+            600,
+            1200,
+            1800,
+            2400,
+            4800,
+            7200,
+            9600,
+            14400,
+            19200,
+            28800,
+            38400,
+            115200,
+            230400
+          ]
+        },
+        "data_bits": {
+          "type": "integer",
+          "description": "Data bits per frame. 5=fivebits, 6=sixbits, 7=sevenbits, 8=eightbits. Other values raise an invalid-argument exception in Zoom Rooms.",
+          "enum": [
+            5,
+            6,
+            7,
+            8
+          ]
+        },
+        "parity": {
+          "type": "integer",
+          "description": "Parity. 0=none, 1=odd, 2=even, 3=mark, 4=space. Other values raise an invalid-argument exception in Zoom Rooms.",
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "stop_bits": {
+          "type": "integer",
+          "description": "Stop bits. 1=one, 2=two, 3=one_point_five. Other values raise an invalid-argument exception in Zoom Rooms.",
+          "enum": [
+            1,
+            2,
+            3
+          ]
+        },
+        "flow_control": {
+          "type": "integer",
+          "description": "Flow control. 0=none, 1=software, 2=hardware. Other values default to none.",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "$comment": {
+          "type": "string",
+          "description": "Optional inline comment for documentation. Ignored by Zoom Rooms and by the schema validator \u2014 purely human-facing."
+        }
+      }
     },
     "port": {
       "type": "object",
@@ -268,48 +439,7 @@
         },
         "settings": {
           "type": "object",
-          "description": "Serial port settings for iTachIP2SL ports.",
-          "required": [
-            "baud_rate",
-            "flow_control",
-            "parity"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "baud_rate": {
-              "type": "string",
-              "enum": [
-                "300",
-                "1200",
-                "2400",
-                "4800",
-                "9600",
-                "19200",
-                "38400",
-                "57600",
-                "115200"
-              ]
-            },
-            "flow_control": {
-              "type": "string",
-              "enum": [
-                "FLOW_NONE",
-                "FLOW_HARDWARE"
-              ]
-            },
-            "parity": {
-              "type": "string",
-              "enum": [
-                "PARITY_NO",
-                "PARITY_ODD",
-                "PARITY_EVEN"
-              ]
-            },
-            "$comment": {
-              "type": "string",
-              "description": "Optional inline comment for documentation. Ignored by Zoom Rooms and by the schema validator \u2014 purely human-facing."
-            }
-          }
+          "description": "Serial port settings. Shape depends on the parent adapter's model: iTachIP2SL ports use #/definitions/iTachSerialSettings (string-coded values); USB2Serial ports use #/definitions/usbSerialSettings (integer-coded values). The appropriate schema is injected via the adapter-level model conditional."
         },
         "methods": {
           "type": "array",
