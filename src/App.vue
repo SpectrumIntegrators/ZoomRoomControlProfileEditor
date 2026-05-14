@@ -89,10 +89,6 @@ nav {
     .logo-link {
         display: block;
         height: calc(#{$navbar-height} - 16px);
-
-        &:hover {
-            opacity: 0.85;
-        }
     }
 
     #logo {

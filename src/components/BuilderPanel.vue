@@ -104,6 +104,7 @@
                             v-model="adapter.model"
                             class="adapter-model"
                             placeholder="model"
+                            required
                             @change="onAdapterModelChange(ai)" />
                         <button
                             type="button"
@@ -131,13 +132,15 @@
                         type="text"
                         class="adapter-addr"
                         :placeholder="ipPlaceholder(adapter.model)"
-                        v-model="adapter.ip" />
+                        v-model="adapter.ip"
+                        :required="!adapter.uuid" />
                     <input
                         v-else
                         type="text"
                         class="adapter-addr"
-                        placeholder="COM3"
-                        v-model="adapter.com" />
+                        placeholder="com port"
+                        v-model="adapter.com"
+                        required />
                     <input
                         v-if="adapter.model === 'iTachIP2SL' || adapter.model === 'iTachIP2CC'"
                         type="text"
@@ -166,6 +169,7 @@
                                 type="text"
                                 class="port-id"
                                 placeholder="id"
+                                required
                                 v-model="port.id" />
                             <input
                                 type="text"
@@ -179,6 +183,7 @@
                                 placeholder="pos"
                                 min="1"
                                 max="3"
+                                required
                                 v-model.number="port.position" />
                             <input
                                 type="text"
@@ -295,6 +300,7 @@
                                         type="text"
                                         class="method-id"
                                         placeholder="id"
+                                        required
                                         v-model="method.id" />
                                     <input
                                         type="text"
@@ -305,6 +311,7 @@
                                         type="text"
                                         class="method-cmd"
                                         placeholder="command"
+                                        required
                                         v-model="method.command" />
                                     <select
                                         v-model="method.type"
@@ -353,6 +360,7 @@
                                                 type="text"
                                                 class="param-id"
                                                 placeholder="id"
+                                                required
                                                 v-model="param.id" />
                                             <input
                                                 type="text"
@@ -363,6 +371,7 @@
                                                 type="text"
                                                 class="param-value"
                                                 placeholder="value"
+                                                required
                                                 v-model="param.value" />
                                             <input
                                                 type="text"
@@ -423,11 +432,13 @@
                         type="text"
                         class="scene-id"
                         placeholder="id"
+                        required
                         v-model="scene.id" />
                     <input
                         type="text"
                         class="scene-name"
                         placeholder="name"
+                        required
                         v-model="scene.name" />
                     <input
                         type="text"
@@ -455,6 +466,7 @@
                             type="text"
                             class="command-ref"
                             placeholder="device.method[.param]"
+                            required
                             v-model="scene.commands[ci]" />
                         <button
                             class="btn-delete"
@@ -498,6 +510,7 @@
                     type="text"
                     class="style-text"
                     placeholder="key.path=value"
+                    required
                     :value="item.value"
                     @input="localProfile.styles[item.index] = $event.target.value" />
                 <button
@@ -526,6 +539,7 @@
                         class="rule-event"
                         :value="event"
                         placeholder="event_name (e.g. zr_meeting_started)"
+                        required
                         @change="renameRule(event, $event.target.value)" />
                     <button
                         class="btn-delete"
@@ -544,6 +558,7 @@
                             type="text"
                             class="command-ref"
                             placeholder="device.method[.param]"
+                            required
                             v-model="localProfile.rules[event][ci]" />
                         <button
                             class="btn-delete"
@@ -577,6 +592,7 @@
                         type="text"
                         class="filter-name"
                         placeholder="name"
+                        required
                         v-model="filter.name" />
                     <button
                         class="btn-delete"
@@ -591,14 +607,16 @@
                         <input
                             type="text"
                             v-model="filter.filter_regex"
-                            placeholder="filter_regex" />
+                            placeholder="filter_regex"
+                            required />
                     </label>
                     <label class="kv-row">
                         <span class="kv-key">trigger</span>
                         <input
                             type="text"
                             v-model="filter.trigger_event"
-                            placeholder="trigger_event (rule key)" />
+                            placeholder="trigger_event (rule key)"
+                            required />
                     </label>
                 </div>
                 <CommentRow
@@ -1066,10 +1084,11 @@ export default {
         },
     },
     methods: {
-        ipPlaceholder(model) {
-            return model === 'GenericNetworkAdapter'
-                ? 'tcp://192.168.1.50:5000'
-                : '192.168.1.10';
+        ipPlaceholder(/* model */) {
+            // Plain field-name placeholder so empty + required highlight
+            // doesn't read as "an address that's malformed". The model-aware
+            // hint can live in the title attribute if we ever surface it.
+            return 'address';
         },
 
         // ----- Info entries <-> info object plumbing -----
@@ -1430,7 +1449,9 @@ export default {
             if (!this.localProfile.rules) this.localProfile.rules = {};
             let i = 1;
             while (`event_${i}` in this.localProfile.rules) i++;
-            this.localProfile.rules[`event_${i}`] = [];
+            // Seed with one empty command — schema requires `minItems: 1`,
+            // so an event with no commands is invalid anyway.
+            this.localProfile.rules[`event_${i}`] = [''];
         },
         removeRule(event) {
             delete this.localProfile.rules[event];
@@ -2069,6 +2090,17 @@ export default {
 .builder-panel select:focus {
     outline: 1px solid c.$accent;
     outline-offset: 0;
+}
+
+// Empty required inputs — soft red tint so the user can see what still needs
+// filling at a glance. Drops back to normal as soon as a value is typed
+// (validity is recomputed by the browser on every input event).
+.builder-panel input:required:invalid {
+    border-color: #d97777;
+    background: #fff5f5;
+}
+.builder-panel input:required:invalid:focus {
+    outline-color: #d97777;
 }
 
 .btn-add {
