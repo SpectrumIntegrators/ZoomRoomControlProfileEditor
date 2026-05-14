@@ -158,20 +158,34 @@ function applyVisibility(json) {
 }
 
 function resolveCommandRefs(json, commandRefs) {
-    // Skip refs we can't resolve. Returning the partial list keeps the
-    // preview usable even when a scene/rule references a port the user
-    // hasn't created yet (or has misnamed) — the validator surfaces the
-    // missing reference as a warning while the rest of the profile still
-    // renders.
+    // Returns one entry per ref so the Output pane / Log can show the
+    // mapping from `port.method[.param]` → `address: command-bytes`. Refs we
+    // can't resolve are kept as `{ ref, error }` so the user can see what
+    // failed instead of silently dropping it — the rest of the list still
+    // resolves and renders.
     if (!Array.isArray(commandRefs)) return [];
     const out = [];
     for (const ref of commandRefs) {
-        if (typeof ref !== 'string') continue;
+        if (typeof ref !== 'string') {
+            out.push({ ref: String(ref), error: 'not a string' });
+            continue;
+        }
         const r = findPortMethodParam(json, ref);
-        if (r.error || !r.port) continue;
+        if (r.error) {
+            out.push({ ref, error: r.error });
+            continue;
+        }
+        if (!r.port) {
+            out.push({ ref, error: 'no matching port' });
+            continue;
+        }
         const adapter = findAdapterForPort(json, r.port.id);
-        if (!adapter) continue;
-        out.push(formatCommand(adapter, r.port, r.method, r.param));
+        if (!adapter) {
+            out.push({ ref, error: 'no adapter owns this port' });
+            continue;
+        }
+        const fc = formatCommand(adapter, r.port, r.method, r.param);
+        out.push({ ref, address: fc.address, command: fc.command });
     }
     return out;
 }

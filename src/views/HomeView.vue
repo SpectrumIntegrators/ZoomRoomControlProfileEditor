@@ -31,7 +31,9 @@
                         :class="{
                             'dark-preview': previewDark,
                             'variant-ipad': previewVariant === 'ipad',
+                            'log-open': logVisible,
                         }">
+                        <div class="preview-content">
                         <div class="preview-sticky-header">
                             <div class="preview-toolbar">
                                 <label class="show-hidden-toggle">
@@ -61,6 +63,16 @@
                                         <span class="material-icons">
                                             {{ previewFullscreen ? 'fullscreen_exit' : 'fullscreen' }}
                                         </span>
+                                    </button>
+                                    <button
+                                        class="btn-theme-toggle"
+                                        :class="{ active: logVisible }"
+                                        :title="logButtonTitle"
+                                        @click="logVisible = !logVisible">
+                                        <span class="material-icons">receipt_long</span>
+                                        <span
+                                            v-if="logUnreadCount > 0"
+                                            class="log-badge">{{ logUnreadCount }}</span>
                                     </button>
                                 </div>
                             </div>
@@ -301,6 +313,53 @@
                             <h1>JSON Parse Error</h1>
                             <p>{{ parseError }}</p>
                         </div>
+                        </div>
+                        <aside
+                            v-if="logVisible"
+                            class="log-drawer">
+                            <div class="log-drawer-header">
+                                <span class="log-title">Activity Log</span>
+                                <button
+                                    v-if="logEntries.length > 0"
+                                    class="log-clear"
+                                    title="Clear log"
+                                    @click="clearLog">
+                                    Clear
+                                </button>
+                                <button
+                                    class="log-close"
+                                    title="Hide log"
+                                    @click="logVisible = false">
+                                    <span class="material-icons">close</span>
+                                </button>
+                            </div>
+                            <div class="log-scroll">
+                                <p
+                                    v-if="logEntries.length === 0"
+                                    class="log-empty">
+                                    Activity will appear here as you interact with the
+                                    preview, edit the JSON, or hit validation warnings.
+                                </p>
+                                <div
+                                    v-for="(e, i) in logEntries"
+                                    :key="i"
+                                    :class="['log-entry', 'log-' + e.level]">
+                                    <div class="log-line">
+                                        <span class="log-time">{{ e.time }}</span>
+                                        <span class="log-message">{{ e.message }}</span>
+                                    </div>
+                                    <ul
+                                        v-if="e.details && e.details.length > 0"
+                                        class="log-details">
+                                        <li
+                                            v-for="(d, j) in e.details"
+                                            :key="j">
+                                            {{ d }}
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </aside>
                     </div>
                 </Pane>
                 <Pane
@@ -358,8 +417,14 @@
                                                 v-for="(c, i) in commands"
                                                 :key="i"
                                                 class="command-row">
-                                                <span class="command-address">{{ c.address }}:</span>
-                                                <pre class="command-text"><span v-for="(seg, j) in splitCommand(c.command)" :key="j" :class="{ ws: seg.ws }">{{ seg.text }}</span></pre>
+                                                <span v-if="c.ref" class="command-ref">{{ c.ref }} →</span>
+                                                <template v-if="c.error">
+                                                    <span class="command-error">unresolved: {{ c.error }}</span>
+                                                </template>
+                                                <template v-else>
+                                                    <span class="command-address">{{ c.address }}:</span>
+                                                    <pre class="command-text"><span v-for="(seg, j) in splitCommand(c.command)" :key="j" :class="{ ws: seg.ws }">{{ seg.text }}</span></pre>
+                                                </template>
                                             </div>
                                         </div>
                                     </div>
@@ -425,6 +490,12 @@ const darkFallbackIcon = darkThemeIcons['icon_alert'] || lightFallbackIcon;
 // Splitpane sizes are persisted to localStorage under a versioned key so a
 // future layout change can ignore stale values rather than render a broken UI.
 const LAYOUT_KEY_PREFIX = 'zrcpe.layout.v1.';
+
+// Activity log: newest first; oldest trimmed past this cap.
+const LOG_MAX_ENTRIES = 200;
+// JSON-modified events are coalesced — many keystrokes in a short window
+// produce one entry, not a hundred.
+const JSON_LOG_DEBOUNCE_MS = 600;
 
 function loadSizes(name, defaults) {
     try {
@@ -511,6 +582,15 @@ export default {
         previewDark: loadPreviewDark(),
         previewVariant: loadPreviewVariant(),
         previewFullscreen: false,
+        // Activity log — accumulated in-memory, newest first. Capped at
+        // LOG_MAX_ENTRIES so a long session doesn't grow without bound.
+        // The log lives in a drawer on the right edge of the preview pane,
+        // toggled open via the toolbar button (next to theme / fullscreen).
+        logEntries: [],
+        logVisible: false,
+        logUnreadCount: 0,
+        // Internal: throttle id for JSON-modified log entries.
+        _jsonLogTimer: null,
     }),
     created() {
         loadRemoteSchema();
@@ -531,6 +611,40 @@ export default {
         },
         previewVariant(newVal) {
             savePreviewVariant(newVal);
+        },
+        json() {
+            // Coalesce a burst of keystrokes into one log entry so the user can
+            // scan the log without it being a wall of "JSON modified".
+            if (this._jsonLogTimer) clearTimeout(this._jsonLogTimer);
+            this._jsonLogTimer = setTimeout(() => {
+                this._jsonLogTimer = null;
+                this.pushLog({ level: 'info', message: 'JSON modified' });
+            }, JSON_LOG_DEBOUNCE_MS);
+        },
+        validationWarnings(newWarnings, oldWarnings) {
+            // Log only when the warning count goes UP — every keystroke briefly
+            // re-runs validation, but if the count hasn't grown there's nothing
+            // new to surface.
+            const oldCount = Array.isArray(oldWarnings) ? oldWarnings.length : 0;
+            const newCount = Array.isArray(newWarnings) ? newWarnings.length : 0;
+            if (newCount > oldCount) {
+                this.pushLog({
+                    level: 'warn',
+                    message: `Validation: ${newCount} warning${newCount === 1 ? '' : 's'}`,
+                    details: newWarnings.map((w) => `${w.path}: ${w.message}`),
+                });
+            }
+        },
+        parseError(newErr, oldErr) {
+            if (newErr && newErr !== oldErr) {
+                this.pushLog({ level: 'error', message: 'JSON parse error', details: [newErr] });
+            }
+        },
+        logVisible(isOpen) {
+            // Opening the drawer "reads" the current backlog so the badge
+            // clears. Reopening later only shows the count of entries that
+            // arrived while it was closed.
+            if (isOpen) this.logUnreadCount = 0;
         },
     },
     methods: {
@@ -579,17 +693,69 @@ export default {
             if (buffer) segments.push({ ws: false, text: buffer });
             return segments;
         },
+        pushLog(entry) {
+            const time = new Date().toTimeString().slice(0, 8); // HH:MM:SS
+            this.logEntries.unshift({
+                time,
+                level: entry.level || 'info',
+                message: entry.message,
+                details: Array.isArray(entry.details) ? entry.details : [],
+            });
+            if (this.logEntries.length > LOG_MAX_ENTRIES) {
+                this.logEntries.length = LOG_MAX_ENTRIES;
+            }
+            // Badge counts only entries the user hasn't seen — opening the
+            // drawer "reads" the current backlog. Cap matches LOG_MAX_ENTRIES
+            // so a long-idle user doesn't see "999+"-style overflow.
+            if (!this.logVisible && this.logUnreadCount < LOG_MAX_ENTRIES) {
+                this.logUnreadCount += 1;
+            }
+        },
+        clearLog() {
+            this.logEntries = [];
+            this.logUnreadCount = 0;
+        },
+        logTrigger(kind, label, commands) {
+            // Build one log entry for a user-initiated trigger (scene button,
+            // event button, or direct control press). Each resolved command is
+            // expanded as a detail line so the user can see what `port.method`
+            // -> `address: bytes` actually fired. Errors surface as their own
+            // entry with warn level.
+            const total = Array.isArray(commands) ? commands.length : 0;
+            const errors = (commands || []).filter((c) => c.error);
+            const ok = (commands || []).filter((c) => !c.error);
+            const details = [
+                ...ok.map((c) => `${c.ref} → ${c.address || '(no address)'}: ${c.command || '(empty)'}`),
+                ...errors.map((c) => `${c.ref} → unresolved (${c.error})`),
+            ];
+            const noun =
+                kind === 'scene' ? 'Scene' : kind === 'event' ? 'Event' : 'Control';
+            const summary =
+                total === 0
+                    ? `${noun} ${JSON.stringify(label)} → no commands`
+                    : `${noun} ${JSON.stringify(label)} → ${total} command${total === 1 ? '' : 's'}`;
+            this.pushLog({
+                level: errors.length > 0 ? 'warn' : 'info',
+                message: summary,
+                details,
+            });
+        },
         zoomClick(adapter, port, method, param) {
-            this.target = param ? `${port.id}.${method.id}.${param.id}` : `${port.id}.${method.id}`;
-            this.commands = [formatCommand(adapter, port, method, param)];
+            const ref = param ? `${port.id}.${method.id}.${param.id}` : `${port.id}.${method.id}`;
+            this.target = ref;
+            const fc = formatCommand(adapter, port, method, param);
+            this.commands = [{ ref, address: fc.address, command: fc.command }];
+            this.logTrigger('control', ref, this.commands);
         },
         sceneClick(scene) {
             this.target = scene.id;
             this.commands = scene.resolvedCommands;
+            this.logTrigger('scene', scene.name || scene.id, this.commands);
         },
         eventClick(rule) {
             this.target = rule.event;
             this.commands = rule.commands;
+            this.logTrigger('event', this.eventLabel(rule.event), this.commands);
         },
         eventLabel,
         onResize(name, panes) {
@@ -645,6 +811,12 @@ export default {
         },
     },
     computed: {
+        logButtonTitle() {
+            if (this.logVisible) return 'Hide activity log';
+            const n = this.logUnreadCount;
+            if (n <= 0) return 'Show activity log';
+            return `Show activity log (${n} unread entr${n === 1 ? 'y' : 'ies'})`;
+        },
         // CodeMirror extensions. Rebuilt when the remote schema arrives so
         // autocomplete/lint/hover swap from the bundled schema to the live one
         // without a page reload. vue-codemirror watches :extensions and
@@ -831,13 +1003,23 @@ $zoom-button-height: 58px;
 
 #preview {
     height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-start;
-    overflow: auto;
-    padding: 0.5rem 0.5rem 0.5rem 0.5rem;
-    gap: 0.5rem;
+    // Positioning context for the log drawer (absolute-positioned child).
+    // The actual scrolling lives on `.preview-content` so the drawer stays
+    // pinned to the visible viewport edge rather than scrolling along with
+    // the controls.
+    position: relative;
+    overflow: hidden;
+
+    > .preview-content {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        overflow: auto;
+        padding: 0.5rem;
+        gap: 0.5rem;
+    }
 
     // Page backgrounds sampled directly from Zoom's actual NRC. The default
     // (no variant class) is the browser virtual-panel palette; the
@@ -951,6 +1133,10 @@ $zoom-button-height: 58px;
         align-items: center;
         justify-content: center;
         opacity: 0.7;
+        position: relative;
+        // `btn-shared` sets `overflow: hidden`; the unread badge needs to
+        // spill out past the button corner so override here.
+        overflow: visible;
 
         .material-icons {
             font-size: 16px;
@@ -959,6 +1145,27 @@ $zoom-button-height: 58px;
         &:hover {
             opacity: 1;
             background: rgba(0, 0, 0, 0.05);
+        }
+
+        &.active {
+            background: rgba(0, 0, 0, 0.08);
+            opacity: 1;
+        }
+
+        .log-badge {
+            position: absolute;
+            top: -4px;
+            right: -6px;
+            background: c.$accent;
+            color: #fff;
+            font-size: 0.6rem;
+            font-weight: 600;
+            line-height: 1;
+            padding: 2px 4px;
+            border-radius: 8px;
+            min-width: 14px;
+            text-align: center;
+            pointer-events: none;
         }
     }
 
@@ -1516,6 +1723,19 @@ $zoom-button-height: 58px;
                 font-family: inherit;
             }
 
+            .command-ref {
+                font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+                font-size: 0.82rem;
+                color: c.$text-dark;
+                opacity: 0.75;
+            }
+
+            .command-error {
+                color: firebrick;
+                font-style: italic;
+                font-size: 0.85rem;
+            }
+
             .command-text {
                 font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
                 background: #f4f4f5;
@@ -1538,5 +1758,135 @@ $zoom-button-height: 58px;
             }
         }
     }
+
 }
+
+// Activity log drawer — pinned to the right edge of the preview pane, slides
+// over the controls when toggled open via the toolbar receipt_long button.
+// Lives inside `#preview` so it's bounded by the preview pane's edges; the
+// drawer doesn't scroll with the controls because `#preview` itself has
+// `overflow: hidden` and the scroll moved to `.preview-content`.
+.log-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: clamp(280px, 36%, 420px);
+    background: #fff;
+    border-left: 1px solid c.$border;
+    box-shadow: -4px 0 10px rgba(0, 0, 0, 0.06);
+    display: flex;
+    flex-direction: column;
+    z-index: 5;
+}
+
+.log-drawer-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid c.$border;
+
+    .log-title {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: c.$text-dark;
+        opacity: 0.75;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-right: auto;
+    }
+
+    .log-clear {
+        @include b.btn-shared;
+        background: transparent;
+        border: 1px solid c.$border;
+        border-radius: 3px;
+        padding: 0.1rem 0.5rem;
+        font-size: 0.72rem;
+        color: c.$text-dark;
+        opacity: 0.75;
+
+        &:hover { opacity: 1; background: #f4f4f5; }
+    }
+
+    .log-close {
+        @include b.btn-shared;
+        background: transparent;
+        border: none;
+        padding: 2px;
+        color: c.$text-dark;
+        opacity: 0.6;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+
+        .material-icons { font-size: 18px; }
+        &:hover { opacity: 1; }
+    }
+}
+
+.log-drawer > .log-scroll {
+    flex: 1 1 auto;
+    overflow: auto;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem 0.6rem;
+}
+
+.log-drawer .log-empty {
+    color: c.$text-dark;
+    opacity: 0.5;
+    font-style: italic;
+    margin: 0;
+}
+
+.log-drawer .log-entry {
+    border-left: 2px solid transparent;
+    padding-left: 0.4rem;
+
+    &.log-info  { border-left-color: #d0d4d9; }
+    &.log-warn  { border-left-color: #f59e0b; }
+    &.log-error { border-left-color: firebrick; }
+}
+
+.log-drawer .log-line {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+
+.log-drawer .log-time {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+    font-size: 0.75rem;
+    color: c.$text-dark;
+    opacity: 0.6;
+    flex: 0 0 auto;
+}
+
+.log-drawer .log-message {
+    flex: 1 1 auto;
+    color: c.$text-dark;
+    word-break: break-word;
+}
+
+.log-drawer .log-warn .log-message  { color: #92400e; }
+.log-drawer .log-error .log-message { color: firebrick; }
+
+.log-drawer .log-details {
+    margin: 0.15rem 0 0;
+    padding-left: 1.25rem;
+    list-style: disc;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+    font-size: 0.78rem;
+    color: c.$text-dark;
+    opacity: 0.85;
+
+    li { word-break: break-word; }
+}
+
 </style>
