@@ -1,7 +1,11 @@
 <template>
     <div
         id="editor-frame-wrap"
-        :class="{ 'preview-fullscreen': previewFullscreen }">
+        :class="{ 'preview-fullscreen': previewFullscreen, 'file-dragging': isDraggingFile }"
+        @dragenter.prevent="onDragEnter"
+        @dragover.prevent="onDragOver"
+        @dragleave.prevent="onDragLeave"
+        @drop.prevent="onFileDrop">
         <Splitpanes
             id="editor-frame"
             class="default-theme"
@@ -442,6 +446,14 @@
             </Splitpanes>
             </Pane>
         </Splitpanes>
+        <div
+            v-if="isDraggingFile"
+            class="drop-overlay">
+            <div class="drop-overlay-card">
+                <span class="material-icons">file_download</span>
+                <p>Drop a profile JSON file to load it</p>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -589,6 +601,12 @@ export default {
         logEntries: [],
         logVisible: false,
         logUnreadCount: 0,
+        // True while a file is being dragged over the editor — shows the
+        // "Drop a profile JSON file" overlay. `_dragDepth` is an internal
+        // counter so nested elements firing dragenter/leave don't make the
+        // overlay flicker; only when the depth returns to 0 do we hide it.
+        isDraggingFile: false,
+        _dragDepth: 0,
         // Internal: throttle id for JSON-modified log entries.
         _jsonLogTimer: null,
     }),
@@ -767,6 +785,57 @@ export default {
             // a plain object via JSON.stringify). We just install it as-is.
             this.json = jsonText;
         },
+        dragHasFile(event) {
+            // dragenter/over events only expose `items` (with their `kind`)
+            // in most browsers; `files` is empty until drop. Only show the
+            // overlay if the drag actually contains a file — text/HTML drags
+            // from another tab shouldn't trigger it.
+            const items = event.dataTransfer && event.dataTransfer.items;
+            if (!items) return false;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].kind === 'file') return true;
+            }
+            return false;
+        },
+        onDragEnter(event) {
+            if (!this.dragHasFile(event)) return;
+            this._dragDepth += 1;
+            this.isDraggingFile = true;
+        },
+        onDragOver(event) {
+            if (this.dragHasFile(event)) {
+                // Explicit "copy" effect so the cursor shows a + symbol while
+                // hovering, matching the user's intent.
+                event.dataTransfer.dropEffect = 'copy';
+            }
+        },
+        onDragLeave() {
+            if (this._dragDepth > 0) this._dragDepth -= 1;
+            if (this._dragDepth === 0) this.isDraggingFile = false;
+        },
+        onFileDrop(event) {
+            this._dragDepth = 0;
+            this.isDraggingFile = false;
+            const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                const text = String(reader.result || '');
+                this.json = text;
+                this.pushLog({
+                    level: 'info',
+                    message: `Loaded file '${file.name}' (${text.length} bytes)`,
+                });
+            };
+            reader.onerror = () => {
+                this.pushLog({
+                    level: 'error',
+                    message: `Could not read file '${file.name}'`,
+                    details: [reader.error && reader.error.message].filter(Boolean),
+                });
+            };
+            reader.readAsText(file);
+        },
         onDownload() {
             // Parse the current JSON, stamp metadata, then download. If the
             // JSON doesn't parse we bail (the button is disabled in that case,
@@ -928,6 +997,48 @@ $zoom-button-height: 58px;
 #editor-frame-wrap {
     height: 100%;
     width: 100%;
+    // Positioning context for the drop overlay below. `relative` won't
+    // affect layout since #editor-frame fills the wrapper exactly.
+    position: relative;
+}
+
+// Full-window overlay shown while the user drags a file in from the OS.
+// Pointer-events: none so the drag-events themselves still reach the
+// wrapper underneath (otherwise we'd swallow the drop and dropEffect).
+.drop-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(70, 36, 68, 0.18);
+    border: 3px dashed rgba(70, 36, 68, 0.6);
+    border-radius: 8px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.drop-overlay-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.5rem 2rem;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    color: c.$primary;
+
+    .material-icons {
+        font-size: 40px;
+        color: c.$accent;
+    }
+
+    p {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 500;
+    }
 }
 
 #editor-frame {

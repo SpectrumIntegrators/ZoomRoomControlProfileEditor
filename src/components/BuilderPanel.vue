@@ -10,6 +10,18 @@
                 </button>
                 <button
                     class="btn-icon"
+                    title="Open a profile JSON file from your computer"
+                    @click="openProfile">
+                    <span class="material-icons">folder_open</span>
+                </button>
+                <input
+                    ref="fileInput"
+                    type="file"
+                    accept="application/json,.json"
+                    class="file-input-hidden"
+                    @change="onFileChosen" />
+                <button
+                    class="btn-icon"
                     :disabled="profile === null"
                     :title="profile === null ? 'Fix JSON errors to enable download' : 'Download profile JSON'"
                     @click="$emit('download')">
@@ -1213,6 +1225,35 @@ export default {
             // round-trip to populate it.
             this.syncEntriesFromInfo(info);
         },
+        openProfile() {
+            if (!confirm('Replace the current profile with one from a file? Current edits will be lost.')) {
+                return;
+            }
+            // Trigger the hidden file input — the OS file picker takes over
+            // from here, and onFileChosen handles the result.
+            this.$refs.fileInput.click();
+        },
+        onFileChosen(event) {
+            const file = event.target.files && event.target.files[0];
+            // Always clear so picking the same file twice in a row still
+            // fires `change`; the actual file processing happens below.
+            event.target.value = '';
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                const text = String(reader.result || '');
+                // Hand the raw text up to HomeView via the existing
+                // update:json channel. If it doesn't parse, the JSON parse
+                // error will surface in the preview just like a bad paste —
+                // we don't pre-validate here so a partially-broken file
+                // still loads for the user to fix in the editor.
+                this.$emit('update:json', text);
+            };
+            reader.onerror = () => {
+                alert('Could not read file: ' + (reader.error && reader.error.message));
+            };
+            reader.readAsText(file);
+        },
 
         // ----- Info -----
         addInfo() {
@@ -1578,6 +1619,12 @@ export default {
     flex-direction: row;
     align-items: center;
     gap: 0.3rem;
+}
+
+.file-input-hidden {
+    // OS file picker is triggered via the Open button; the input itself is
+    // off-screen so it doesn't take up layout space or pick up focus rings.
+    display: none;
 }
 
 .btn-icon {
