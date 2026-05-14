@@ -1,21 +1,26 @@
 <template>
     <section class="builder-panel">
         <header class="builder-title-row">
-            <h2 class="builder-title">Builder</h2>
-            <label
-                v-if="profile !== null"
-                class="cb-event-only">
-                <input
-                    type="checkbox"
-                    v-model="eventOnly" />
-                Events only
-            </label>
-            <button
-                class="btn-new"
-                @click="newProfile">
-                New
-            </button>
+            <div class="builder-actions">
+                <button
+                    class="btn-icon"
+                    title="New profile"
+                    @click="newProfile">
+                    <span class="material-icons">data_object</span>
+                </button>
+                <button
+                    class="btn-icon"
+                    :disabled="profile === null"
+                    :title="profile === null ? 'Fix JSON errors to enable download' : 'Download profile JSON'"
+                    @click="$emit('download')">
+                    <span class="material-icons">download</span>
+                </button>
+            </div>
         </header>
+
+        <!-- The Events-only checkbox used to live up here; it moved into the
+             builder content (with the rest of the profile-wide controls) so
+             this header stays focused on document-level actions. -->
 
         <div
             v-if="profile === null"
@@ -26,6 +31,20 @@
         <div
             v-else
             class="builder-content">
+            <!-- ============== PROFILE-WIDE TOGGLES ============== -->
+            <label class="cb-event-only">
+                <input
+                    type="checkbox"
+                    v-model="eventOnly" />
+                Events only
+                <span class="cb-event-only-hint">
+                    (hides the Native Room Controls UI in Zoom while still firing
+                    event rules — used when a custom Zoom App provides the UI, so
+                    users don't have to switch between native controls and the
+                    custom app)
+                </span>
+            </label>
+
             <!-- ============== INFO ============== -->
             <div
                 v-if="localProfile.info"
@@ -39,38 +58,20 @@
                         ×
                     </button>
                 </div>
+                <p class="section-hint">
+                    These fields aren't used by Zoom — they're for your reference
+                    only.
+                </p>
                 <div class="info-fields">
-                    <div
-                        v-for="key in INFO_KEYS"
-                        :key="key"
-                        class="kv-row">
-                        <label class="kv-key">{{ key }}</label>
-                        <input
-                            type="text"
-                            v-model="localProfile.info[key]"
-                            :placeholder="key" />
-                    </div>
-                    <div
-                        v-for="key in customInfoKeys"
-                        :key="'custom-' + key"
-                        class="kv-row">
-                        <input
-                            type="text"
-                            class="kv-key-input"
-                            :value="key"
-                            placeholder="key"
-                            @change="renameInfoKey(key, $event.target.value)" />
-                        <input
-                            type="text"
-                            v-model="localProfile.info[key]"
-                            placeholder="value" />
-                        <button
-                            class="btn-delete"
-                            title="Remove item"
-                            @click="removeInfoKey(key)">
-                            ×
-                        </button>
-                    </div>
+                    <InfoRow
+                        v-for="entry in infoEntries"
+                        :key="entry.id"
+                        :row-key="entry.key"
+                        v-model="entry.value"
+                        :all-keys="allInfoKeys"
+                        :placeholder-map="INFO_PLACEHOLDERS"
+                        @rename="renameInfoEntry(entry.id, $event)"
+                        @remove="removeInfoEntry(entry.id)" />
                 </div>
                 <button
                     class="btn-add"
@@ -90,6 +91,7 @@
             </button>
 
             <!-- ============== ADAPTERS ============== -->
+            <h3 class="section-title">Adapters</h3>
             <div
                 v-for="(adapter, ai) in localProfile.adapters"
                 :key="'adapter-' + ai"
@@ -614,6 +616,8 @@
 </template>
 
 <script>
+import { SCHEMA_URL, EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
+
 // Small inline component for the "+ Comment / $comment" row. Owns no state of
 // its own — emits to the parent which mutates the owner directly.
 const CommentRow = {
@@ -641,8 +645,97 @@ const CommentRow = {
     },
 };
 
-const SCHEMA_URL =
-    'https://cdn.jsdelivr.net/gh/SpectrumIntegrators/PublicSchemas@main/ZoomRoomsControlProfile/v1/zrcs-profile.schema.json';
+// One info-block row. Holds its own `localKey` state instead of binding the
+// input value straight to the data, so the user's typed key survives parent
+// re-renders (e.g. when +Item adds a sibling row) — that was the source of
+// the "all my renames revert to customN" bug. The placeholder follows the
+// typed key, not the committed key, so typing "job" immediately swaps to
+// the corresponding hint. Duplicate keys are detected here against the
+// `allKeys` list and shown as an inline warning; the rename is *not* emitted
+// until the conflict is resolved, but the typed text stays put for the user
+// to see and fix.
+const InfoRow = {
+    name: 'InfoRow',
+    props: {
+        rowKey: { type: String, required: true },
+        modelValue: { type: String, default: '' },
+        allKeys: { type: Array, default: () => [] },
+        placeholderMap: { type: Object, default: () => ({}) },
+    },
+    emits: ['rename', 'update:modelValue', 'remove'],
+    data() {
+        return { localKey: this.rowKey };
+    },
+    computed: {
+        hasConflict() {
+            const trimmed = (this.localKey || '').trim();
+            if (!trimmed) return false;
+            // Count how many entries in allKeys hold the same key. When
+            // we're already committed at this key (rowKey === trimmed),
+            // a count > 1 means another entry duplicates us. When we're
+            // mid-typing (rowKey !== trimmed), a count >= 1 means another
+            // entry already has the typed key.
+            let count = 0;
+            for (const k of this.allKeys) {
+                if (k === trimmed) count++;
+            }
+            if (this.rowKey === trimmed) {
+                return count > 1;
+            }
+            return count >= 1;
+        },
+        valuePlaceholder() {
+            return this.placeholderMap[this.localKey] || 'value';
+        },
+    },
+    watch: {
+        // When the data's key for this row changes (e.g., rename committed
+        // or prop sync after JSON-text edit), reset local input to match.
+        rowKey(newVal) {
+            this.localKey = newVal;
+        },
+    },
+    methods: {
+        onKeyBlur() {
+            const trimmed = (this.localKey || '').trim();
+            // Empty keys aren't useful in a JSON object — revert. Anything
+            // else commits unconditionally, even if it collides with an
+            // existing key. The parent's renameInfoKey handles the collision
+            // by overwriting the existing entry so the UI and data never
+            // drift out of sync. The `hasConflict` computed still drives
+            // the visual warning while the user is typing — that's the
+            // heads-up that the commit is going to replace another field.
+            if (!trimmed) {
+                this.localKey = this.rowKey;
+                return;
+            }
+            if (trimmed === this.rowKey) return;
+            this.$emit('rename', trimmed);
+        },
+    },
+    template: `
+        <div class="kv-row" :class="{ 'kv-row-conflict': hasConflict }">
+            <input
+                type="text"
+                class="kv-key-input"
+                v-model="localKey"
+                placeholder="key"
+                @change="onKeyBlur" />
+            <input
+                type="text"
+                :value="modelValue"
+                @input="$emit('update:modelValue', $event.target.value)"
+                :placeholder="valuePlaceholder" />
+            <span
+                v-if="hasConflict"
+                class="kv-conflict"
+                :title="'Another field is already named ' + localKey.trim()">
+                duplicate
+            </span>
+            <button class="btn-delete" title="Remove item" @click="$emit('remove')">×</button>
+        </div>
+    `,
+};
 
 // Known adapter models. These populate the model picker dropdown; users can
 // still type any custom string (e.g., a Zoom-added model we don't yet know
@@ -660,6 +753,18 @@ const INFO_KEYS = [
     'createdBy',
     'createdDate',
 ];
+
+// Example values shown as input placeholders so each known info field gets
+// a meaningful hint instead of just echoing its label.
+const INFO_PLACEHOLDERS = {
+    customer: 'Veridian Dynamics',
+    location: 'Huddle Room 3',
+    job: 'ACME-1234',
+    displayType: 'Samsung QM75R',
+    automation: 'Display on at meeting start, off at operation hours end',
+    createdBy: 'J. Programmer',
+    createdDate: 'YYYY-MM-DD',
+};
 
 const ITACH_BAUD = ['300', '1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'];
 const ITACH_FLOW = ['FLOW_NONE', 'FLOW_HARDWARE'];
@@ -696,17 +801,129 @@ function deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
 }
 
+// Build a fresh info object with all known fields as empty strings, in
+// INFO_KEYS order. The user can rename, fill, or delete any of them; the
+// placeholders give a hint about what each is for, and deleting is just
+// `× this row`.
+function makeBlankInfo() {
+    const info = {};
+    for (const k of INFO_KEYS) info[k] = '';
+    return info;
+}
+
+// Strip the special `$comment` property out of an info object so we can
+// compare just the user-facing fields. The CommentRow at the bottom of the
+// info card manages `$comment` independently of the entries array.
+function infoWithoutComment(info) {
+    if (!info) return {};
+    const out = {};
+    for (const k of Object.keys(info)) {
+        if (k !== '$comment') out[k] = info[k];
+    }
+    return out;
+}
+
+// Cheap deep-equal — info is always plain JSON-shaped data so JSON.stringify
+// is a fine yardstick. Used to detect "echoes" of our own emits coming back
+// through the prop, so we can skip pointless re-sync work.
+function shallowJsonEqual(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// Custom JSON serializer used in place of JSON.stringify when emitting the
+// profile. It handles every value type the same way as JSON.stringify (so the
+// non-info parts of the profile come out byte-identical), but for the info
+// section it emits one line per entry in the supplied array — which lets
+// duplicate keys appear in the JSON text (JSON.stringify can't do this since
+// plain JS objects can't hold duplicate keys).
+function serializeProfileJson(profile, infoEntries, indent = 4) {
+    return serializeValue(profile, 0, indent, infoEntries);
+}
+
+function pad(level, indent) {
+    return ' '.repeat(level * indent);
+}
+
+function serializeValue(value, level, indent, infoEntries) {
+    if (value === null || typeof value !== 'object') {
+        return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+        if (value.length === 0) return '[]';
+        const items = value.map(
+            (v) => pad(level + 1, indent) + serializeValue(v, level + 1, indent, infoEntries)
+        );
+        return '[\n' + items.join(',\n') + '\n' + pad(level, indent) + ']';
+    }
+    const keys = Object.keys(value);
+    if (keys.length === 0) return '{}';
+    const pairs = keys.map((k) => {
+        const childIndent = pad(level + 1, indent);
+        if (level === 0 && k === 'info') {
+            return (
+                childIndent +
+                JSON.stringify(k) +
+                ': ' +
+                serializeInfoSection(value[k], infoEntries, level + 1, indent)
+            );
+        }
+        return (
+            childIndent +
+            JSON.stringify(k) +
+            ': ' +
+            serializeValue(value[k], level + 1, indent, infoEntries)
+        );
+    });
+    return '{\n' + pairs.join(',\n') + '\n' + pad(level, indent) + '}';
+}
+
+function serializeInfoSection(infoObj, entries, level, indent) {
+    const childIndent = pad(level + 1, indent);
+    const pairs = [];
+    // `$comment` is owned by CommentRow, not by the entries array, so emit it
+    // first from the underlying info object if present.
+    if (infoObj && '$comment' in infoObj) {
+        pairs.push(
+            childIndent + '"$comment": ' + JSON.stringify(infoObj.$comment)
+        );
+    }
+    // Then every entry in order — including duplicates. The resulting JSON
+    // text shows two lines with the same key. JSON.parse will collapse them
+    // (last-wins) when the file is consumed, but writing them out is honest
+    // about what's in the builder.
+    for (const e of entries) {
+        pairs.push(
+            childIndent + JSON.stringify(e.key) + ': ' + JSON.stringify(e.value)
+        );
+    }
+    if (pairs.length === 0) return '{}';
+    return '{\n' + pairs.join(',\n') + '\n' + pad(level, indent) + '}';
+}
+
 export default {
     name: 'BuilderPanel',
-    components: { CommentRow },
+    components: { CommentRow, InfoRow },
     props: {
         profile: {
             type: Object,
             default: null,
         },
     },
-    emits: ['update:profile'],
+    emits: ['update:json', 'download'],
     data() {
+        // Build the initial info entries from the prop. Each entry has a
+        // stable id so the array can hold duplicate keys without v-for
+        // collisions — that's what lets the user actually see two rows
+        // labelled "job" instead of having one silently overwrite the other.
+        const initialInfo = (this.profile || {}).info || null;
+        const initialEntries = [];
+        let nextEntryId = 1;
+        if (initialInfo) {
+            for (const [k, v] of Object.entries(initialInfo)) {
+                if (k === '$comment') continue;
+                initialEntries.push({ id: nextEntryId++, key: k, value: v });
+            }
+        }
         return {
             localProfile: deepClone(this.profile || {}),
             syncingFromProp: false,
@@ -714,8 +931,21 @@ export default {
             // whose dropdown is currently expanded. Tracked at the component
             // level rather than per-adapter so opening one closes the others.
             openModelDropdownIndex: -1,
+            // Info rendered as an ordered array of {id, key, value} rather
+            // than as the underlying object's keys so duplicate keys can
+            // coexist visually. The entries->info pipeline collapses
+            // duplicates (last write wins) only at the boundary to the
+            // emitted profile. See the watchers below.
+            infoEntries: initialEntries,
+            nextInfoEntryId: nextEntryId,
+            // Last-known non-$comment info content, used to detect when an
+            // incoming prop change actually requires re-syncing entries from
+            // info (external JSON edit) vs. is just an echo of our own emit
+            // or a $comment-only change.
+            lastSyncedNonCommentInfo: deepClone(infoWithoutComment(initialInfo)),
             ADAPTER_MODELS,
             INFO_KEYS,
+            INFO_PLACEHOLDERS,
             ITACH_BAUD,
             ITACH_FLOW,
             ITACH_PARITY,
@@ -728,11 +958,18 @@ export default {
         };
     },
     computed: {
-        customInfoKeys() {
-            if (!this.localProfile.info) return [];
-            return Object.keys(this.localProfile.info).filter(
-                (k) => !INFO_KEYS.includes(k) && k !== '$comment'
-            );
+        // Flat list of keys currently held by the entries array. Includes
+        // duplicates intentionally — InfoRow's conflict detection counts
+        // occurrences against this list so two entries with the same key
+        // both flag each other as duplicates. `$comment` is also pushed in
+        // (from localProfile.info) so renaming a row to `$comment` is
+        // detected as colliding with the CommentRow-managed property.
+        allInfoKeys() {
+            const keys = this.infoEntries.map((e) => e.key);
+            if (this.localProfile.info && '$comment' in this.localProfile.info) {
+                keys.push('$comment');
+            }
+            return keys;
         },
         ruleEntries() {
             if (!this.localProfile.rules) return [];
@@ -776,9 +1013,41 @@ export default {
             handler(newProfile) {
                 this.syncingFromProp = true;
                 this.localProfile = deepClone(newProfile || {});
+                // Re-sync the info entries only if the *non-$comment* part
+                // of info actually changed. Skipping the sync when the
+                // change came from our own emit (echo) or from a CommentRow
+                // mutation lets duplicate entries survive the round-trip;
+                // we'd lose them if we always rebuilt entries from info.
+                const incomingNoComment = infoWithoutComment(
+                    this.localProfile.info
+                );
+                if (!shallowJsonEqual(incomingNoComment, this.lastSyncedNonCommentInfo)) {
+                    this.syncEntriesFromInfo(this.localProfile.info);
+                }
                 this.$nextTick(() => {
                     this.syncingFromProp = false;
                 });
+            },
+        },
+        infoEntries: {
+            deep: true,
+            handler() {
+                if (this.syncingFromProp) return;
+                const newInfo = this.buildInfoFromEntries();
+                const newNoComment = infoWithoutComment(newInfo);
+                if (shallowJsonEqual(newNoComment, this.lastSyncedNonCommentInfo)) {
+                    return;
+                }
+                this.lastSyncedNonCommentInfo = deepClone(newNoComment);
+                // newInfo === null means there are no entries AND no
+                // $comment, so the info block is effectively empty — drop
+                // the key entirely so v-if="localProfile.info" hides the
+                // card and serialized JSON doesn't carry an empty info: {}.
+                if (newInfo === null) {
+                    delete this.localProfile.info;
+                } else {
+                    this.localProfile.info = newInfo;
+                }
             },
         },
         localProfile: {
@@ -786,7 +1055,13 @@ export default {
             handler() {
                 if (this.syncingFromProp) return;
                 if (this.profile === null) return;
-                this.$emit('update:profile', deepClone(this.localProfile));
+                // Emit the JSON *text* instead of an object so duplicate info
+                // keys (which a plain object can't hold) make it to the
+                // editor. The custom serializer reads `infoEntries` directly
+                // for the info section so each duplicate gets its own line.
+                const ordered = orderProfileKeys(this.localProfile);
+                const json = serializeProfileJson(ordered, this.infoEntries);
+                this.$emit('update:json', json);
             },
         },
     },
@@ -795,6 +1070,51 @@ export default {
             return model === 'GenericNetworkAdapter'
                 ? 'tcp://192.168.1.50:5000'
                 : '192.168.1.10';
+        },
+
+        // ----- Info entries <-> info object plumbing -----
+        // Build entries from an info object, preserving existing entry IDs
+        // when their keys still match (so a row's input doesn't lose focus
+        // / cursor position across prop syncs). `$comment` is held back
+        // because CommentRow handles it directly.
+        syncEntriesFromInfo(info) {
+            const existingByKey = {};
+            for (const e of this.infoEntries) {
+                if (!existingByKey[e.key]) existingByKey[e.key] = [];
+                existingByKey[e.key].push(e);
+            }
+            const newEntries = [];
+            for (const [k, v] of Object.entries(info || {})) {
+                if (k === '$comment') continue;
+                const existing = existingByKey[k] && existingByKey[k].shift();
+                newEntries.push(
+                    existing
+                        ? { id: existing.id, key: k, value: v }
+                        : { id: this.nextInfoEntryId++, key: k, value: v }
+                );
+            }
+            this.infoEntries = newEntries;
+            this.lastSyncedNonCommentInfo = deepClone(infoWithoutComment(info));
+        },
+        // Collapse the entries array into a plain object suitable for
+        // emitting as part of the profile. Duplicate keys collapse with
+        // the later entry winning (standard JSON object semantics).
+        // Returns null when there is nothing to emit (no entries, no
+        // $comment) so the caller can delete the info key entirely.
+        buildInfoFromEntries() {
+            const hasComment =
+                this.localProfile.info && '$comment' in this.localProfile.info;
+            if (this.infoEntries.length === 0 && !hasComment) {
+                return null;
+            }
+            const info = {};
+            if (hasComment) {
+                info.$comment = this.localProfile.info.$comment;
+            }
+            for (const e of this.infoEntries) {
+                info[e.key] = e.value;
+            }
+            return info;
         },
 
         // ----- Top-level -----
@@ -806,8 +1126,16 @@ export default {
             // the user has a real starting structure to fill in, instead of
             // having to click + Adapter + Port + Method themselves before
             // any preview can render.
+            // Seed `info` with all known fields (empty) plus the editor's
+            // identifying stamps. If the user deletes the info block later,
+            // the download path won't recreate it — so this is a one-time
+            // provision, not an enforced floor.
+            const info = makeBlankInfo();
+            info.createdDate = todayIso();
+            info.tool = EDITOR_URL;
             this.localProfile = {
                 $schema: SCHEMA_URL,
+                info,
                 adapters: [
                     {
                         model: 'GenericNetworkAdapter',
@@ -822,36 +1150,70 @@ export default {
                     },
                 ],
             };
+            // Rebuild entries from the new info so the builder UI reflects
+            // the seed data immediately rather than waiting for the prop
+            // round-trip to populate it.
+            this.syncEntriesFromInfo(info);
         },
 
         // ----- Info -----
         addInfo() {
             if (this.localProfile.info) return;
-            this.localProfile.info = {};
+            this.localProfile.info = makeBlankInfo();
+            const entries = [];
+            for (const k of INFO_KEYS) {
+                entries.push({ id: this.nextInfoEntryId++, key: k, value: '' });
+            }
+            this.infoEntries = entries;
+            this.lastSyncedNonCommentInfo = deepClone(
+                infoWithoutComment(this.localProfile.info)
+            );
         },
         removeInfo() {
+            this.infoEntries = [];
+            this.lastSyncedNonCommentInfo = {};
             delete this.localProfile.info;
         },
         addInfoItem() {
-            if (!this.localProfile.info) this.localProfile.info = {};
+            // Auto-name to keep keys non-empty for valid JSON output. The
+            // user can rename freely (including to a duplicate, which the
+            // entries array now supports with the inline conflict warning).
+            const existing = new Set(this.infoEntries.map((e) => e.key));
             let i = 1;
-            while (`custom${i}` in this.localProfile.info) i++;
-            this.localProfile.info[`custom${i}`] = '';
+            while (existing.has(`custom${i}`)) i++;
+            this.infoEntries.push({
+                id: this.nextInfoEntryId++,
+                key: `custom${i}`,
+                value: '',
+            });
         },
-        renameInfoKey(oldKey, newKey) {
+        renameInfoEntry(entryId, newKey) {
             newKey = (newKey || '').trim();
-            if (!newKey || newKey === oldKey) return;
-            if (newKey in this.localProfile.info) return;
-            // Rebuild the object so the renamed key stays in its original slot
-            // rather than getting reinserted at the end.
-            const next = {};
-            for (const k of Object.keys(this.localProfile.info)) {
-                next[k === oldKey ? newKey : k] = this.localProfile.info[k];
+            if (!newKey) return;
+            const entry = this.infoEntries.find((e) => e.id === entryId);
+            if (!entry || newKey === entry.key) return;
+            // Renaming to "$comment" is the one special case: $comment is
+            // owned by CommentRow, not by the entries array. Move the value
+            // there and drop the entry.
+            if (newKey === '$comment') {
+                if (!this.localProfile.info) this.localProfile.info = {};
+                this.localProfile.info.$comment = entry.value;
+                this.infoEntries = this.infoEntries.filter(
+                    (e) => e.id !== entryId
+                );
+                return;
             }
-            this.localProfile.info = next;
+            // For everything else, just update the key on the existing entry.
+            // Duplicates are allowed — the entries array is an ordered list,
+            // not a map, so two rows can both be "job" and the user sees a
+            // duplicate warning instead of losing data. The entries-to-info
+            // pipeline collapses duplicates on emit (later wins).
+            entry.key = newKey;
         },
-        removeInfoKey(key) {
-            delete this.localProfile.info[key];
+        removeInfoEntry(entryId) {
+            this.infoEntries = this.infoEntries.filter(
+                (e) => e.id !== entryId
+            );
         },
 
         // ----- Comments -----
@@ -1112,7 +1474,13 @@ export default {
 };
 </script>
 
-<style lang="scss" scoped>
+<style lang="scss">
+// Not `scoped` because the InfoRow and CommentRow helper components defined
+// inline in this file use runtime-compiled string templates — their elements
+// don't get this component's `data-v-…` attribute, so scoped selectors would
+// miss them. Class names below are unique to the builder so nothing leaks
+// to other components. The one bare `input, select` rule is manually scoped
+// with `.builder-panel` to keep it from styling inputs in other views.
 @use '@/styles/colors' as c;
 @use '@/styles/buttons' as b;
 
@@ -1134,44 +1502,64 @@ export default {
     top: -0.75rem;
     background: c.$background;
     margin: -0.75rem -0.75rem 0;
-    padding: 0.75rem 0.75rem 0.5rem;
+    padding: 0.5rem 0.75rem;
     z-index: 1;
 }
 
-.builder-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: c.$text-dark;
-    margin: 0;
+.builder-actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.3rem;
 }
 
-.btn-new {
+.btn-icon {
     @include b.btn-shared;
     background: c.$primary;
     color: c.$text-light;
     border: none;
-    padding: 0.3rem 0.8rem;
     border-radius: 4px;
-    font-size: 0.85rem;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 
-    &:hover {
+    .material-icons {
+        font-size: 20px;
+        line-height: 1;
+    }
+
+    &:hover:not(:disabled) {
         background: c.$accent;
+    }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
     }
 }
 
 .cb-event-only {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.8rem;
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 0.4rem;
+    font-size: 0.85rem;
     color: c.$text-dark;
-    opacity: 0.85;
     cursor: pointer;
     user-select: none;
-    margin-left: auto;
+    padding: 0.25rem 0;
 
     input[type='checkbox'] {
         cursor: pointer;
+    }
+
+    .cb-event-only-hint {
+        font-size: 0.75rem;
+        font-style: italic;
+        opacity: 0.65;
     }
 }
 
@@ -1299,14 +1687,6 @@ export default {
     align-items: center;
     gap: 0.4rem;
 
-    .kv-key {
-        font-size: 0.78rem;
-        font-weight: 500;
-        color: c.$text-dark;
-        opacity: 0.7;
-        flex: 0 0 90px;
-    }
-
     .kv-key-input {
         flex: 0 0 110px;
     }
@@ -1314,6 +1694,19 @@ export default {
     input {
         flex: 1 1 auto;
         min-width: 0;
+    }
+
+    &.kv-row-conflict .kv-key-input {
+        border-color: #c03221;
+        background: #fef2f2;
+    }
+
+    .kv-conflict {
+        flex: 0 0 auto;
+        font-size: 0.72rem;
+        font-style: italic;
+        color: #c03221;
+        cursor: help;
     }
 }
 
@@ -1613,7 +2006,7 @@ export default {
 }
 
 // ---- Comment row ----
-:deep(.comment-row) {
+.comment-row {
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -1628,7 +2021,7 @@ export default {
     }
 }
 
-:deep(.btn-comment) {
+.btn-comment {
     @include b.btn-shared;
     background: transparent;
     border: 1px dashed c.$border;
@@ -1661,8 +2054,8 @@ export default {
     }
 }
 
-input,
-select {
+.builder-panel input,
+.builder-panel select {
     font-size: 0.85rem;
     padding: 0.25rem 0.4rem;
     border: 1px solid c.$border;
@@ -1672,8 +2065,8 @@ select {
     font-family: inherit;
 }
 
-input:focus,
-select:focus {
+.builder-panel input:focus,
+.builder-panel select:focus {
     outline: 1px solid c.$accent;
     outline-offset: 0;
 }

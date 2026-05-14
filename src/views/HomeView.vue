@@ -9,7 +9,8 @@
             <div id="builder-column">
                 <BuilderPanel
                     :profile="rawProfile"
-                    @update:profile="onBuilderEdit" />
+                    @update:json="onBuilderEdit"
+                    @download="onDownload" />
             </div>
         </Pane>
         <Pane
@@ -284,15 +285,6 @@
                             :size="bottomRowSizes[0]"
                             :min-size="20">
                             <div id="json-pane">
-                                <div class="json-toolbar">
-                                    <button
-                                        class="btn-download"
-                                        :disabled="rawProfile === null"
-                                        :title="rawProfile === null ? 'Fix JSON errors to enable download' : 'Download profile JSON'"
-                                        @click="onDownload">
-                                        Download
-                                    </button>
-                                </div>
                                 <Codemirror
                                     v-model="json"
                                     class="json-editor"
@@ -306,8 +298,8 @@
                             :size="bottomRowSizes[1]"
                             :min-size="20">
                             <div id="output-pane">
-                                <div
-                                    class="events-section"
+                                <section
+                                    class="output-card"
                                     v-if="calculatedControls && calculatedControls.resolvedRules && calculatedControls.resolvedRules.length > 0">
                                     <p class="section-label">Zoom Room Events</p>
                                     <div class="events-grid">
@@ -320,33 +312,36 @@
                                             {{ eventLabel(rule.event) }}
                                         </button>
                                     </div>
-                                </div>
-                                <div
-                                    id="zoom-output"
-                                    v-if="target">
-                                    <p id="zoom-output-target">{{ target }}</p>
-                                    <hr class="zoom-output-divider" />
-                                    <div id="zoom-output-command">
-                                        <div
-                                            v-if="commands.length === 0"
-                                            class="command-row">
-                                            <span class="command-empty">(no commands)</span>
-                                        </div>
-                                        <div
-                                            v-for="(c, i) in commands"
-                                            :key="i"
-                                            class="command-row">
-                                            <span class="command-address">{{ c.address }}:</span>
-                                            <pre class="command-text"><span v-for="(seg, j) in splitCommand(c.command)" :key="j" :class="{ ws: seg.ws }">{{ seg.text }}</span></pre>
+                                </section>
+                                <section class="output-card">
+                                    <p class="section-label">Output</p>
+                                    <div
+                                        id="zoom-output"
+                                        v-if="target">
+                                        <p id="zoom-output-target">{{ target }}</p>
+                                        <hr class="zoom-output-divider" />
+                                        <div id="zoom-output-command">
+                                            <div
+                                                v-if="commands.length === 0"
+                                                class="command-row">
+                                                <span class="command-empty">(no commands)</span>
+                                            </div>
+                                            <div
+                                                v-for="(c, i) in commands"
+                                                :key="i"
+                                                class="command-row">
+                                                <span class="command-address">{{ c.address }}:</span>
+                                                <pre class="command-text"><span v-for="(seg, j) in splitCommand(c.command)" :key="j" :class="{ ws: seg.ws }">{{ seg.text }}</span></pre>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                                <p
-                                    v-else
-                                    id="output-empty">
-                                    Click a scene, device control, or event to see the resolved
-                                    command(s) here.
-                                </p>
+                                    <p
+                                        v-else
+                                        id="output-empty">
+                                        Click a scene, device control, or event to see the
+                                        resolved command(s) here.
+                                    </p>
+                                </section>
                             </div>
                         </Pane>
                     </Splitpanes>
@@ -362,6 +357,7 @@ import { validateProfile } from '@/validation/validateProfile';
 import { transformProfile, formatCommand } from '@/validation/transformProfile';
 import { schemaState, loadRemoteSchema } from '@/validation/schemaLoader';
 import BuilderPanel from '@/components/BuilderPanel.vue';
+import { EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
 import { Splitpanes, Pane } from 'splitpanes';
 import { eventLabel } from '@/data/zoomEvents';
 import { Codemirror } from 'vue-codemirror';
@@ -413,45 +409,6 @@ function saveSizes(name, panes) {
     }
 }
 
-// Zoom doesn't care about top-level key order, but Zoom's own example
-// profiles follow info → adapters → scenes → styles → rules → response_filters.
-// We normalize to that order whenever the builder emits a change so newly-added
-// blocks like `info` don't get appended to the bottom. Hand-edits in the
-// textarea preserve whatever order the user typed.
-const PROFILE_KEY_ORDER = [
-    '$schema',
-    'info',
-    'adapters',
-    'scenes',
-    'styles',
-    'rules',
-    'response_filters',
-];
-
-// Stamped into info.tool on download so consumers of the file can trace it
-// back to this editor. Placeholder until we have a real hosted URL.
-const EDITOR_URL = 'https://github.com/SpectrumIntegrators/ZoomRoomControlProfileEditor';
-
-function todayIso() {
-    // YYYY-MM-DD in local time. Date.toISOString uses UTC, which can drift
-    // a day off near midnight; build the string from local components.
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-}
-
-function orderProfileKeys(profile) {
-    const ordered = {};
-    for (const key of PROFILE_KEY_ORDER) {
-        if (key in profile) ordered[key] = profile[key];
-    }
-    for (const key of Object.keys(profile)) {
-        if (!(key in ordered)) ordered[key] = profile[key];
-    }
-    return ordered;
-}
 
 export default {
     name: 'HomeView',
@@ -542,8 +499,11 @@ export default {
         onResize(name, panes) {
             saveSizes(name, panes);
         },
-        onBuilderEdit(updated) {
-            this.json = JSON.stringify(orderProfileKeys(updated), null, 4);
+        onBuilderEdit(jsonText) {
+            // BuilderPanel now emits the serialized JSON text directly so it
+            // can include duplicate keys in the info section (impossible from
+            // a plain object via JSON.stringify). We just install it as-is.
+            this.json = jsonText;
         },
         onDownload() {
             // Parse the current JSON, stamp metadata, then download. If the
@@ -556,16 +516,23 @@ export default {
             } catch {
                 return;
             }
-            if (!profile.info) profile.info = {};
-            profile.info.createdDate = todayIso();
-            if (!profile.info.tool) profile.info.tool = EDITOR_URL;
+            // If the user has an info block, stamp it. If they've deleted it
+            // (or it never existed), respect that choice and don't recreate.
+            if (profile.info) {
+                profile.info.createdDate = todayIso();
+                if (!profile.info.tool) profile.info.tool = EDITOR_URL;
+            }
             const ordered = orderProfileKeys(profile);
             const text = JSON.stringify(ordered, null, 4);
             // Also reflect the metadata stamps back into the editor so what
             // the user downloaded matches what they're looking at.
             this.json = text;
 
-            const parts = [profile.info.customer, profile.info.location, 'Zoom Room Control Profile']
+            // Filename: "<customer> <location> Zoom Room Control Profile.json"
+            // with each piece included only when set. No info block → just the
+            // generic name.
+            const info = profile.info || {};
+            const parts = [info.customer, info.location, 'Zoom Room Control Profile']
                 .map((s) => (typeof s === 'string' ? s.trim() : ''))
                 .filter(Boolean);
             const filename = `${parts.join(' ')}.json`;
@@ -1072,33 +1039,6 @@ $zoom-button-height: 58px;
     min-height: 0;
 }
 
-.json-toolbar {
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.4rem;
-}
-
-.btn-download {
-    @include b.btn-shared;
-    background: c.$primary;
-    color: c.$text-light;
-    border: none;
-    padding: 0.3rem 0.8rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-
-    &:hover:not(:disabled) {
-        background: c.$accent;
-    }
-
-    &:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
-}
-
 // vue-codemirror's wrapper div uses `display: contents` (set inline), so any
 // flex/border/height applied to it is ignored — the real .cm-editor becomes
 // a direct flex child of #json-pane. Style it directly so it fills the
@@ -1128,53 +1068,66 @@ $zoom-button-height: 58px;
     overflow: auto;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.6rem;
+
+    // Each section in the output pane is rendered as its own card so the
+    // events palette and the resolved-command output read as two related
+    // but distinct panels (rather than the output looking like it's part
+    // of the events list).
+    .output-card {
+        flex: 0 0 auto;
+        background: #fff;
+        border: 1px solid c.$border;
+        border-radius: 6px;
+        padding: 0.5rem 0.6rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+
+        .section-label {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: c.$text-dark;
+            opacity: 0.6;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin: 0;
+        }
+    }
 
     #output-empty {
         color: c.$text-dark;
         opacity: 0.5;
         font-style: italic;
-        font-size: 0.9rem;
-        padding: 1rem;
+        font-size: 0.85rem;
+        padding: 0.3rem 0;
         text-align: center;
     }
 
-    .events-section {
-        flex: 0 0 auto;
+    .events-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
 
-        .section-label {
-            font-size: 14px;
-            font-weight: 500;
-            color: c.$text-dark;
-            opacity: 0.7;
-            margin-bottom: 0.4rem;
+    .btn-event {
+        @include b.btn-shared;
+
+        background: #fff;
+        color: c.$text-dark;
+        border: 1px solid c.$border;
+        border-radius: 4px;
+        padding: 0.15rem 0.6rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+        font-size: 0.85rem;
+        line-height: 1.5;
+
+        &:hover {
+            background: c.$zoom-button;
         }
 
-        .events-grid {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.4rem;
-        }
-
-        .btn-event {
-            @include b.btn-shared;
-
-            background: #fff;
-            color: c.$text-dark;
-            border: 1px solid c.$border;
-            border-radius: 4px;
-            padding: 0.15rem 0.6rem;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
-            font-size: 0.85rem;
-            line-height: 1.5;
-
-            &:hover {
-                background: c.$zoom-button;
-            }
-
-            &:active {
-                background: color.adjust(c.$zoom-button, $lightness: -10%);
-            }
+        &:active {
+            background: color.adjust(c.$zoom-button, $lightness: -10%);
         }
     }
 
@@ -1185,12 +1138,10 @@ $zoom-button-height: 58px;
     }
 
     #zoom-output {
-        border: 1px solid c.$border;
-        background: #fff;
+        // No border / background — the parent .output-card supplies those.
         display: flex;
         flex-direction: column;
         gap: 0.4rem;
-        padding: 0.5rem;
 
         #zoom-output-target {
             font-size: 1rem;

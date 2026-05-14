@@ -180,6 +180,222 @@ function runCrossRefValidation(json) {
     return errors;
 }
 
+// Walk the raw JSON text and report any object that has the same key more
+// than once. `JSON.parse` collapses duplicates silently (last wins), so by
+// the time we have the parsed object the duplicates are gone — the only
+// place to spot them is in the source text. Returns [{ path, key }] per
+// occurrence past the first.
+function findDuplicateKeys(text) {
+    const dups = [];
+    const stack = []; // each item: { keys: Set, label: string }
+    let i = 0;
+
+    const skipWs = () => {
+        while (i < text.length && /\s/.test(text[i])) i++;
+    };
+
+    const readString = () => {
+        // text[i] === '"'
+        const start = i;
+        i++;
+        while (i < text.length) {
+            if (text[i] === '\\') {
+                i += 2;
+                continue;
+            }
+            if (text[i] === '"') break;
+            i++;
+        }
+        const raw = text.slice(start, i + 1);
+        i++; // past closing "
+        try {
+            return JSON.parse(raw);
+        } catch {
+            return '';
+        }
+    };
+
+    const skipValue = () => {
+        skipWs();
+        if (i >= text.length) return;
+        const ch = text[i];
+        if (ch === '"') {
+            readString();
+            return;
+        }
+        if (ch === '{') {
+            parseObject();
+            return;
+        }
+        if (ch === '[') {
+            parseArray();
+            return;
+        }
+        while (i < text.length && !/[,}\]\s]/.test(text[i])) i++;
+    };
+
+    const currentPath = () =>
+        stack
+            .map((s) => s.label)
+            .filter(Boolean)
+            .join('/') || '(root)';
+
+    const parseObject = () => {
+        i++; // past {
+        const ctx = {
+            keys: new Set(),
+            label: stack.length > 0 ? stack[stack.length - 1].lastKey : '',
+        };
+        stack.push(ctx);
+        skipWs();
+        while (i < text.length && text[i] !== '}') {
+            skipWs();
+            if (text[i] !== '"') break;
+            const key = readString();
+            if (ctx.keys.has(key)) {
+                dups.push({ path: currentPath(), key });
+            } else {
+                ctx.keys.add(key);
+            }
+            ctx.lastKey = key;
+            skipWs();
+            if (text[i] === ':') i++;
+            skipValue();
+            skipWs();
+            if (text[i] === ',') {
+                i++;
+                continue;
+            }
+        }
+        if (text[i] === '}') i++;
+        stack.pop();
+    };
+
+    const parseArray = () => {
+        i++; // past [
+        skipWs();
+        while (i < text.length && text[i] !== ']') {
+            skipValue();
+            skipWs();
+            if (text[i] === ',') {
+                i++;
+                continue;
+            }
+        }
+        if (text[i] === ']') i++;
+    };
+
+    skipWs();
+    if (text[i] === '{') parseObject();
+    else if (text[i] === '[') parseArray();
+    return dups;
+}
+
+// Walk the parsed profile and flag any place where an identifier is reused
+// where it shouldn't be. Port ids are globally unique because the
+// cross-reference resolver finds them by id across all adapters — two ports
+// with the same id mean the second is unreachable. Methods are per-port,
+// params are per-method, scenes share a global id space, and response filter
+// names are referenced by port `response_filter` arrays.
+function runUniqueIdValidation(json) {
+    const errors = [];
+
+    const flag = (path, message) =>
+        errors.push({ source: 'duplicate-id', path, message });
+
+    if (Array.isArray(json.adapters)) {
+        // Port ids are global — cross-ref resolution finds the first match
+        // across every adapter, so collisions anywhere strand the duplicates.
+        const portSeen = new Map();
+        json.adapters.forEach((adapter, ai) => {
+            if (!adapter || !Array.isArray(adapter.ports)) return;
+            adapter.ports.forEach((port, pi) => {
+                if (!port || typeof port.id !== 'string') return;
+                if (portSeen.has(port.id)) {
+                    const first = portSeen.get(port.id);
+                    flag(
+                        `/adapters/${ai}/ports/${pi}`,
+                        `Port id "${port.id}" already defined at /adapters/${first.ai}/ports/${first.pi}. Command references resolve to the first port — this one is unreachable.`
+                    );
+                } else {
+                    portSeen.set(port.id, { ai, pi });
+                }
+
+                // Method ids per port
+                if (!Array.isArray(port.methods)) return;
+                const methodSeen = new Map();
+                port.methods.forEach((method, mi) => {
+                    if (!method || typeof method.id !== 'string') return;
+                    if (methodSeen.has(method.id)) {
+                        flag(
+                            `/adapters/${ai}/ports/${pi}/methods/${mi}`,
+                            `Method id "${method.id}" already defined at /adapters/${ai}/ports/${pi}/methods/${methodSeen.get(method.id)} on port "${port.id}".`
+                        );
+                    } else {
+                        methodSeen.set(method.id, mi);
+                    }
+
+                    // Param ids per method
+                    if (!Array.isArray(method.params)) return;
+                    const paramSeen = new Map();
+                    method.params.forEach((param, ppi) => {
+                        if (!param || typeof param.id !== 'string') return;
+                        if (paramSeen.has(param.id)) {
+                            flag(
+                                `/adapters/${ai}/ports/${pi}/methods/${mi}/params/${ppi}`,
+                                `Param id "${param.id}" already defined at /adapters/${ai}/ports/${pi}/methods/${mi}/params/${paramSeen.get(param.id)} on method "${port.id}.${method.id}".`
+                            );
+                        } else {
+                            paramSeen.set(param.id, ppi);
+                        }
+                    });
+                });
+            });
+        });
+    }
+
+    if (Array.isArray(json.scenes)) {
+        const seen = new Map();
+        json.scenes.forEach((scene, si) => {
+            if (!scene || typeof scene.id !== 'string') return;
+            if (seen.has(scene.id)) {
+                flag(
+                    `/scenes/${si}`,
+                    `Scene id "${scene.id}" already defined at /scenes/${seen.get(scene.id)}.`
+                );
+            } else {
+                seen.set(scene.id, si);
+            }
+        });
+    }
+
+    if (Array.isArray(json.response_filters)) {
+        const seen = new Map();
+        json.response_filters.forEach((filter, fi) => {
+            if (!filter || typeof filter.name !== 'string') return;
+            if (seen.has(filter.name)) {
+                flag(
+                    `/response_filters/${fi}`,
+                    `Response filter name "${filter.name}" already defined at /response_filters/${seen.get(filter.name)}. Port references resolve to the first one only.`
+                );
+            } else {
+                seen.set(filter.name, fi);
+            }
+        });
+    }
+
+    return errors;
+}
+
+function runDuplicateKeyValidation(rawText) {
+    if (typeof rawText !== 'string') return [];
+    return findDuplicateKeys(rawText).map((d) => ({
+        source: 'duplicate-key',
+        path: '/' + d.path + (d.path === '(root)' ? d.key : '/' + d.key),
+        message: `Duplicate key "${d.key}" in ${d.path}. JSON parsers collapse duplicates (later value wins) — remove one.`,
+    }));
+}
+
 function runQuirkValidation(rawText, json) {
     const errors = [];
 
@@ -207,19 +423,31 @@ function runQuirkValidation(rawText, json) {
 }
 
 export function validateProfile(rawText, json) {
+    // Duplicate-key (text-scan) and duplicate-id (parsed-object scan)
+    // warnings apply regardless of schema/cross-ref state — they happen at a
+    // level the other validators can't see. Always include them.
+    const alwaysErrors = [
+        ...runDuplicateKeyValidation(rawText),
+        ...runUniqueIdValidation(json),
+    ];
+
     const schemaErrors = runSchemaValidation(json);
     if (schemaErrors.length > 0) {
-        return { ok: false, errors: schemaErrors };
+        return { ok: false, errors: [...alwaysErrors, ...schemaErrors] };
     }
 
     const crossRefErrors = runCrossRefValidation(json);
     if (crossRefErrors.length > 0) {
-        return { ok: false, errors: crossRefErrors };
+        return { ok: false, errors: [...alwaysErrors, ...crossRefErrors] };
     }
 
     const quirkErrors = runQuirkValidation(rawText, json);
     if (quirkErrors.length > 0) {
-        return { ok: false, errors: quirkErrors };
+        return { ok: false, errors: [...alwaysErrors, ...quirkErrors] };
+    }
+
+    if (alwaysErrors.length > 0) {
+        return { ok: false, errors: alwaysErrors };
     }
 
     return { ok: true, errors: [] };
