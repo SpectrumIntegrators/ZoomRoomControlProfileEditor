@@ -31,6 +31,29 @@
                                         v-model="showHidden" />
                                     <span>Show hidden controls (testing only)</span>
                                 </label>
+                                <button
+                                    v-if="validationWarnings.length > 0"
+                                    class="btn-warnings-toggle"
+                                    @click="warningsExpanded = !warningsExpanded">
+                                    {{ validationWarnings.length }} warning{{ validationWarnings.length === 1 ? '' : 's' }}
+                                    <span class="caret">{{ warningsExpanded ? '▾' : '▸' }}</span>
+                                </button>
+                            </div>
+                            <div
+                                v-if="validationWarnings.length > 0 && warningsExpanded"
+                                class="preview-warnings">
+                                <p class="warnings-intro">
+                                    These don't block the preview — Zoom may still
+                                    accept the profile, and the rest of the file
+                                    renders below.
+                                </p>
+                                <ul>
+                                    <li
+                                        v-for="(w, i) in validationWarnings"
+                                        :key="i">
+                                        <code>{{ w.path }}</code>: {{ w.message }}
+                                    </li>
+                                </ul>
                             </div>
                             <div
                                 v-if="showHidden && hasHiddenContent"
@@ -244,10 +267,10 @@
                             </template>
                         </div>
                         <div
-                            v-else-if="calculatedControls == null"
+                            v-else-if="parseError"
                             id="json-invalid">
-                            <h1>Error</h1>
-                            <p>{{ errorMessage }}</p>
+                            <h1>JSON Parse Error</h1>
+                            <p>{{ parseError }}</p>
                         </div>
                     </div>
                 </Pane>
@@ -261,10 +284,22 @@
                             :size="bottomRowSizes[0]"
                             :min-size="20">
                             <div id="json-pane">
-                                <textarea
-                                    id="json-textarea"
+                                <div class="json-toolbar">
+                                    <button
+                                        class="btn-download"
+                                        :disabled="rawProfile === null"
+                                        :title="rawProfile === null ? 'Fix JSON errors to enable download' : 'Download profile JSON'"
+                                        @click="onDownload">
+                                        Download
+                                    </button>
+                                </div>
+                                <Codemirror
                                     v-model="json"
-                                    spellcheck="false"></textarea>
+                                    class="json-editor"
+                                    :extensions="cmExtensions"
+                                    :indent-with-tab="true"
+                                    :tab-size="4"
+                                    placeholder="// JSON profile..." />
                             </div>
                         </Pane>
                         <Pane
@@ -329,6 +364,9 @@ import { schemaState, loadRemoteSchema } from '@/validation/schemaLoader';
 import BuilderPanel from '@/components/BuilderPanel.vue';
 import { Splitpanes, Pane } from 'splitpanes';
 import { eventLabel } from '@/data/zoomEvents';
+import { Codemirror } from 'vue-codemirror';
+import { json as cmJsonLang } from '@codemirror/lang-json';
+import { jsonSchema as cmJsonSchema } from 'codemirror-json-schema';
 
 // Vite replacement for webpack's require.context. Eagerly imports every PNG
 // under zoom_icons/dark/ as a URL and indexes them by the filename stem so the
@@ -390,6 +428,20 @@ const PROFILE_KEY_ORDER = [
     'response_filters',
 ];
 
+// Stamped into info.tool on download so consumers of the file can trace it
+// back to this editor. Placeholder until we have a real hosted URL.
+const EDITOR_URL = 'https://github.com/SpectrumIntegrators/ZoomRoomControlProfileEditor';
+
+function todayIso() {
+    // YYYY-MM-DD in local time. Date.toISOString uses UTC, which can drift
+    // a day off near midnight; build the string from local components.
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
 function orderProfileKeys(profile) {
     const ordered = {};
     for (const key of PROFILE_KEY_ORDER) {
@@ -403,14 +455,14 @@ function orderProfileKeys(profile) {
 
 export default {
     name: 'HomeView',
-    components: { BuilderPanel, Splitpanes, Pane },
+    components: { BuilderPanel, Splitpanes, Pane, Codemirror },
     data: () => ({
         json: JSON.stringify(exampleJson, null, 4),
-        errorMessage: '',
         target: '',
         commands: [],
         scenesExpanded: false,
         showHidden: false,
+        warningsExpanded: false,
         outerSizes: loadSizes('outer', [35, 65]),
         rightColSizes: loadSizes('right-col', [70, 30]),
         bottomRowSizes: loadSizes('bottom-row', [65, 35]),
@@ -493,8 +545,53 @@ export default {
         onBuilderEdit(updated) {
             this.json = JSON.stringify(orderProfileKeys(updated), null, 4);
         },
+        onDownload() {
+            // Parse the current JSON, stamp metadata, then download. If the
+            // JSON doesn't parse we bail (the button is disabled in that case,
+            // but a keyboard shortcut or programmatic call could still reach
+            // here).
+            let profile;
+            try {
+                profile = JSON.parse(this.json);
+            } catch {
+                return;
+            }
+            if (!profile.info) profile.info = {};
+            profile.info.createdDate = todayIso();
+            if (!profile.info.tool) profile.info.tool = EDITOR_URL;
+            const ordered = orderProfileKeys(profile);
+            const text = JSON.stringify(ordered, null, 4);
+            // Also reflect the metadata stamps back into the editor so what
+            // the user downloaded matches what they're looking at.
+            this.json = text;
+
+            const parts = [profile.info.customer, profile.info.location, 'Zoom Room Control Profile']
+                .map((s) => (typeof s === 'string' ? s.trim() : ''))
+                .filter(Boolean);
+            const filename = `${parts.join(' ')}.json`;
+
+            const blob = new Blob([text], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
     },
     computed: {
+        // CodeMirror extensions. Rebuilt when the remote schema arrives so
+        // autocomplete/lint/hover swap from the bundled schema to the live one
+        // without a page reload. vue-codemirror watches :extensions and
+        // reconfigures the EditorView, so the swap is non-destructive.
+        cmExtensions() {
+            // Read schemaState.version so this re-runs when the remote schema
+            // is fetched and swapped in.
+            schemaState.version;
+            return [cmJsonSchema(schemaState.schema), cmJsonLang()];
+        },
         rawProfile() {
             // Parsed-but-not-transformed view of the profile, fed to the
             // builder. Kept separate from `calculatedControls` because the
@@ -537,25 +634,46 @@ export default {
             if (this.scenesExpanded || scenes.length <= 8) return scenes;
             return scenes.slice(0, 8);
         },
+        // Validation findings — schema, cross-ref, and quirk errors. These are
+        // surfaced as warnings in a banner above the preview; they no longer
+        // block rendering. We want the tool to keep working when Zoom adds a
+        // new adapter model or URL scheme we haven't catalogued yet.
+        validationWarnings() {
+            schemaState.version;
+            if (!this.rawProfile) return [];
+            const result = validateProfile(this.json, this.rawProfile);
+            return result.errors || [];
+        },
+        // Hard error — set only when the JSON itself can't be parsed, since
+        // there's literally nothing to render in that case.
+        parseError() {
+            if (this.rawProfile !== null) return null;
+            try {
+                JSON.parse(this.json);
+                return null;
+            } catch (e) {
+                return e && e.message ? e.message : 'JSON parsing failed';
+            }
+        },
         calculatedControls() {
             // Read schemaState.version so this re-runs when the remote schema arrives.
             schemaState.version;
 
-            let json;
+            if (!this.rawProfile) return null;
+            if (!Array.isArray(this.rawProfile.adapters)) return null;
+
+            // transformProfile mutates its input; clone so subsequent re-runs
+            // see the freshly-parsed profile, not a previously-transformed one.
+            // The transform is now defensive against missing/malformed fields;
+            // wrap in try/catch as belt-and-suspenders in case something
+            // unexpected still slips through.
             try {
-                json = JSON.parse(this.json);
-            } catch {
-                this.errorMessage = 'JSON Parsing Failed';
+                const clone = JSON.parse(JSON.stringify(this.rawProfile));
+                return transformProfile(clone);
+            } catch (e) {
+                console.warn('[transformProfile] threw:', e);
                 return null;
             }
-
-            const result = validateProfile(this.json, json);
-            if (!result.ok) {
-                this.errorMessage = result.errors[0].message;
-                return null;
-            }
-
-            return transformProfile(json);
         },
     },
 };
@@ -645,6 +763,65 @@ $zoom-button-height: 58px;
         border-radius: 6px;
         font-size: 0.85rem;
         line-height: 1.4;
+    }
+
+    .btn-warnings-toggle {
+        @include b.btn-shared;
+        margin-left: auto;
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+        color: #78350f;
+        padding: 0.15rem 0.55rem;
+        border-radius: 4px;
+        font-size: 0.78rem;
+        line-height: 1.4;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+
+        .caret {
+            font-size: 0.7rem;
+            opacity: 0.7;
+        }
+
+        &:hover {
+            background: #fde68a;
+        }
+    }
+
+    .preview-warnings {
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+        color: #78350f;
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        line-height: 1.4;
+        max-height: 180px;
+        overflow: auto;
+
+        .warnings-intro {
+            font-style: italic;
+            opacity: 0.85;
+            margin-bottom: 0.4rem;
+        }
+
+        ul {
+            margin: 0;
+            padding-left: 1.2rem;
+
+            li {
+                margin: 0.15rem 0;
+            }
+        }
+
+        code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+            font-size: 0.78rem;
+            background: rgba(0, 0, 0, 0.05);
+            padding: 1px 4px;
+            border-radius: 3px;
+        }
     }
 
     .event-only-placeholder {
@@ -891,18 +1068,58 @@ $zoom-button-height: 58px;
     display: flex;
     flex-direction: column;
     padding: 0.5rem;
+    gap: 0.4rem;
     min-height: 0;
 }
 
-#json-textarea {
-    flex: 1 1 auto;
-    min-height: 0;
-    width: 100%;
-    border: 1px solid c.$border;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
-    font-size: 0.9rem;
-    padding: 0.5rem;
-    resize: none;
+.json-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.btn-download {
+    @include b.btn-shared;
+    background: c.$primary;
+    color: c.$text-light;
+    border: none;
+    padding: 0.3rem 0.8rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+
+    &:hover:not(:disabled) {
+        background: c.$accent;
+    }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+}
+
+// vue-codemirror's wrapper div uses `display: contents` (set inline), so any
+// flex/border/height applied to it is ignored — the real .cm-editor becomes
+// a direct flex child of #json-pane. Style it directly so it fills the
+// remaining pane height, and lock the scroller to overflow:auto so the editor
+// scrolls internally instead of growing past the pane.
+#json-pane {
+    .cm-editor {
+        flex: 1 1 auto;
+        min-height: 0;
+        border: 1px solid c.$border;
+
+        &.cm-focused {
+            outline: none;
+        }
+    }
+
+    .cm-scroller {
+        overflow: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+        font-size: 0.85rem;
+    }
 }
 
 #output-pane {

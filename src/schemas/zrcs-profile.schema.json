@@ -176,9 +176,17 @@
               "model": {
                 "const": "iTachIP2SL"
               }
-            }
+            },
+            "required": [
+              "model"
+            ]
           },
           "then": {
+            "not": {
+              "required": [
+                "com"
+              ]
+            },
             "properties": {
               "ip": {
                 "$ref": "#/definitions/privateIpv4"
@@ -206,9 +214,17 @@
               "model": {
                 "const": "iTachIP2CC"
               }
-            }
+            },
+            "required": [
+              "model"
+            ]
           },
           "then": {
+            "not": {
+              "required": [
+                "com"
+              ]
+            },
             "properties": {
               "ip": {
                 "$ref": "#/definitions/privateIpv4"
@@ -230,9 +246,18 @@
               "model": {
                 "const": "GenericNetworkAdapter"
               }
-            }
+            },
+            "required": [
+              "model"
+            ]
           },
           "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["uuid"] },
+                { "required": ["com"] }
+              ]
+            },
             "properties": {
               "ip": {
                 "$ref": "#/definitions/genericNetworkUrl"
@@ -263,6 +288,12 @@
             "required": [
               "com"
             ],
+            "not": {
+              "anyOf": [
+                { "required": ["uuid"] },
+                { "required": ["ip"] }
+              ]
+            },
             "properties": {
               "ports": {
                 "items": {

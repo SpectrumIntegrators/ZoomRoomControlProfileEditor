@@ -1,25 +1,37 @@
 import { findPortMethodParam } from './validateProfile';
 
 export function formatCommand(adapter, port, method, param) {
-    if (adapter.model === 'iTachIP2CC') {
-        return { address: adapter.ip, command: `Relay ${param.position} ${param.name}` };
+    const address = adapter && adapter.ip ? adapter.ip : adapter && adapter.com ? adapter.com : '';
+    if (adapter && adapter.model === 'iTachIP2CC') {
+        return {
+            address,
+            command: `Relay ${param ? param.position : ''} ${param ? param.name : ''}`,
+        };
     }
-    let command = method.command;
-    if (method.type === 'actions' && param) {
+    let command = method && typeof method.command === 'string' ? method.command : '';
+    if (method && method.type === 'actions' && param) {
         command = command.replace('%', param.value);
     }
-    return { address: adapter.ip, command };
+    return { address, command };
 }
 
 function findAdapterForPort(json, portId) {
-    return json.adapters.find((a) => (a.ports || []).some((p) => p.id === portId));
+    if (!Array.isArray(json.adapters)) return null;
+    return (
+        json.adapters.find((a) =>
+            Array.isArray(a && a.ports) ? a.ports.some((p) => p && p.id === portId) : false
+        ) || null
+    );
 }
 
 function applyITachIP2CCMethods(json) {
+    if (!Array.isArray(json.adapters)) return;
     json.adapters
-        .filter((adapter) => adapter.model === 'iTachIP2CC')
+        .filter((adapter) => adapter && adapter.model === 'iTachIP2CC')
         .forEach((adapter) => {
+            if (!Array.isArray(adapter.ports)) return;
             adapter.ports.forEach((port) => {
+                if (!port) return;
                 port.methods = [
                     {
                         name: 'Power',
@@ -35,25 +47,27 @@ function applyITachIP2CCMethods(json) {
                 // any other primary control, so we add the style and let it flow
                 // through the normal style-inlining pass below.
                 if (!Array.isArray(json.styles)) json.styles = [];
-                json.styles.push(port.id + '.main_method=power');
+                if (port.id) json.styles.push(port.id + '.main_method=power');
             });
         });
 }
 
 function applyStyles(json) {
     if (!Array.isArray(json.styles) || json.styles.length === 0) return;
+    if (!Array.isArray(json.adapters)) return;
 
     const styleRegex =
         /^(?<port>[^.=]*)\.?(?<method>[^.=]*)\.?(?<param>[^.=]*)\.(?<style>[^.=]*)=(?<value>.*)$/;
 
     json.styles.forEach((style) => {
-        if (style.includes('..')) return;
+        if (typeof style !== 'string' || style.includes('..')) return;
         const result = styleRegex.exec(style);
         if (!result) return;
 
         let port = null;
         for (const adapter of json.adapters) {
-            const found = (adapter.ports || []).find((p) => p.id === result.groups.port);
+            if (!adapter || !Array.isArray(adapter.ports)) continue;
+            const found = adapter.ports.find((p) => p && p.id === result.groups.port);
             if (found) {
                 port = found;
                 break;
@@ -65,12 +79,14 @@ function applyStyles(json) {
             case 'icon': {
                 const icon = result.groups.value;
                 if (result.groups.method) {
-                    const method = port.methods.find((m) => m.id === result.groups.method);
+                    const method = Array.isArray(port.methods)
+                        ? port.methods.find((m) => m && m.id === result.groups.method)
+                        : null;
                     if (!method) return;
                     if (result.groups.param) {
-                        const param = (method.params || []).find(
-                            (p) => p.id === result.groups.param
-                        );
+                        const param = Array.isArray(method.params)
+                            ? method.params.find((p) => p && p.id === result.groups.param)
+                            : null;
                         if (param) param.icon = icon;
                     } else {
                         method.icon = icon;
@@ -81,16 +97,18 @@ function applyStyles(json) {
                 break;
             }
             case 'main_method': {
-                port.main_method = port.methods.find(
-                    (m) => m.id === result.groups.value
-                );
+                if (Array.isArray(port.methods)) {
+                    port.main_method = port.methods.find(
+                        (m) => m && m.id === result.groups.value
+                    );
+                }
                 break;
             }
             case 'invisible': {
                 if (!result.groups.param) {
-                    const method = port.methods.find(
-                        (m) => m.id === result.groups.method
-                    );
+                    const method = Array.isArray(port.methods)
+                        ? port.methods.find((m) => m && m.id === result.groups.method)
+                        : null;
                     if (method) {
                         const hidden = result.groups.value === 'true';
                         method.visible = !hidden;
@@ -110,11 +128,16 @@ function applyStyles(json) {
 }
 
 function applyVisibility(json) {
+    if (!Array.isArray(json.adapters)) return;
     json.adapters.forEach((adapter) => {
+        if (!adapter || !Array.isArray(adapter.ports)) return;
         adapter.ports.forEach((port) => {
-            port.showOnlyMainMethod = Boolean(port.main_method && port.methods.length === 1);
+            if (!port) return;
+            const methods = Array.isArray(port.methods) ? port.methods : [];
+            port.showOnlyMainMethod = Boolean(port.main_method && methods.length === 1);
 
-            port.methods.forEach((method) => {
+            methods.forEach((method) => {
+                if (!method) return;
                 // `rolledUp` means the method is the port's main_method and
                 // already appears in the port header — it should never render
                 // as a row in the methods list, even when "Show hidden
@@ -135,11 +158,22 @@ function applyVisibility(json) {
 }
 
 function resolveCommandRefs(json, commandRefs) {
-    return commandRefs.map((commandRef) => {
-        const { port, method, param } = findPortMethodParam(json, commandRef);
-        const adapter = findAdapterForPort(json, port.id);
-        return formatCommand(adapter, port, method, param);
-    });
+    // Skip refs we can't resolve. Returning the partial list keeps the
+    // preview usable even when a scene/rule references a port the user
+    // hasn't created yet (or has misnamed) — the validator surfaces the
+    // missing reference as a warning while the rest of the profile still
+    // renders.
+    if (!Array.isArray(commandRefs)) return [];
+    const out = [];
+    for (const ref of commandRefs) {
+        if (typeof ref !== 'string') continue;
+        const r = findPortMethodParam(json, ref);
+        if (r.error || !r.port) continue;
+        const adapter = findAdapterForPort(json, r.port.id);
+        if (!adapter) continue;
+        out.push(formatCommand(adapter, r.port, r.method, r.param));
+    }
+    return out;
 }
 
 function resolveScenes(json) {

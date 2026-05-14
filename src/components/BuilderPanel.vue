@@ -96,15 +96,34 @@
                 class="adapter-card">
                 <div class="adapter-header">
                     <span class="row-label">Adapter</span>
-                    <select
-                        v-model="adapter.model"
-                        class="adapter-model"
-                        @change="onAdapterModelChange(ai)">
-                        <option value="iTachIP2SL">iTach IP2SL</option>
-                        <option value="iTachIP2CC">iTach IP2CC</option>
-                        <option value="GenericNetworkAdapter">Generic Network</option>
-                        <option value="USB2Serial">USB2Serial</option>
-                    </select>
+                    <div class="adapter-model-combo">
+                        <input
+                            type="text"
+                            v-model="adapter.model"
+                            class="adapter-model"
+                            placeholder="model"
+                            @change="onAdapterModelChange(ai)" />
+                        <button
+                            type="button"
+                            class="model-chevron"
+                            :aria-expanded="openModelDropdownIndex === ai"
+                            title="Pick from known models"
+                            @click.stop="toggleModelDropdown(ai)">
+                            ▾
+                        </button>
+                        <ul
+                            v-if="openModelDropdownIndex === ai"
+                            class="model-dropdown"
+                            @click.stop>
+                            <li
+                                v-for="m in ADAPTER_MODELS"
+                                :key="m"
+                                :class="{ selected: adapter.model === m }"
+                                @click="selectModel(ai, m)">
+                                {{ m }}
+                            </li>
+                        </ul>
+                    </div>
                     <input
                         v-if="adapter.model !== 'USB2Serial'"
                         type="text"
@@ -456,10 +475,18 @@
             </button>
 
             <!-- ============== STYLES ============== -->
-            <!-- main_method, method-level invisible, and zr_event_only are -->
-            <!-- managed via dedicated controls above. Anything else (icons, -->
-            <!-- name overrides, port-level invisible) stays here as raw text. -->
+            <!-- Every documented style pattern is handled by a dedicated -->
+            <!-- control elsewhere in the builder (names live on the port/ -->
+            <!-- method directly, icons / main_method / invisible / event-only -->
+            <!-- have their own inputs). This section is an escape hatch for -->
+            <!-- patterns Zoom adds later or that we haven't surfaced yet. -->
             <h3 class="section-title">Styles</h3>
+            <p class="section-hint">
+                Escape hatch for style patterns the builder doesn't know about
+                yet. Names and icons live on the port / method / param fields
+                above; main method, invisible, and events-only have their own
+                controls.
+            </p>
             <div
                 v-for="item in freeFormStyles"
                 :key="'style-' + item.index"
@@ -468,7 +495,7 @@
                 <input
                     type="text"
                     class="style-text"
-                    placeholder="device.icon=icon_alert  |  device.name=My Device  |  device.method.name=..."
+                    placeholder="key.path=value"
                     :value="item.value"
                     @input="localProfile.styles[item.index] = $event.target.value" />
                 <button
@@ -615,7 +642,12 @@ const CommentRow = {
 };
 
 const SCHEMA_URL =
-    'https://raw.githubusercontent.com/SpectrumIntegrators/PublicSchemas/refs/heads/main/ZoomRoomsControlProfile/v1/zrcs-profile.schema.json';
+    'https://cdn.jsdelivr.net/gh/SpectrumIntegrators/PublicSchemas@main/ZoomRoomsControlProfile/v1/zrcs-profile.schema.json';
+
+// Known adapter models. These populate the model picker dropdown; users can
+// still type any custom string (e.g., a Zoom-added model we don't yet know
+// about) directly into the input.
+const ADAPTER_MODELS = ['iTachIP2SL', 'iTachIP2CC', 'GenericNetworkAdapter', 'USB2Serial'];
 
 // Known info fields surfaced in the schema. Anything else the user adds via
 // "+ Item" is preserved as a custom property.
@@ -678,6 +710,11 @@ export default {
         return {
             localProfile: deepClone(this.profile || {}),
             syncingFromProp: false,
+            // -1 when no model picker is open; otherwise the adapter index
+            // whose dropdown is currently expanded. Tracked at the component
+            // level rather than per-adapter so opening one closes the others.
+            openModelDropdownIndex: -1,
+            ADAPTER_MODELS,
             INFO_KEYS,
             ITACH_BAUD,
             ITACH_FLOW,
@@ -724,6 +761,15 @@ export default {
                 .filter(({ value }) => !STYLE_PATTERNS.managedByUI(value));
         },
     },
+    mounted() {
+        // Close the model dropdown when clicking outside it. The chevron
+        // button and the dropdown <ul> use @click.stop to prevent their own
+        // clicks from bubbling up and closing themselves.
+        document.addEventListener('click', this.closeModelDropdown);
+    },
+    beforeUnmount() {
+        document.removeEventListener('click', this.closeModelDropdown);
+    },
     watch: {
         profile: {
             deep: true,
@@ -756,9 +802,25 @@ export default {
             if (!confirm('Clear the profile and start over? This will discard all current data.')) {
                 return;
             }
+            // Seed with a single GenericNetworkAdapter and one empty port so
+            // the user has a real starting structure to fill in, instead of
+            // having to click + Adapter + Port + Method themselves before
+            // any preview can render.
             this.localProfile = {
                 $schema: SCHEMA_URL,
-                adapters: [],
+                adapters: [
+                    {
+                        model: 'GenericNetworkAdapter',
+                        ip: '',
+                        ports: [
+                            {
+                                id: '',
+                                name: '',
+                                methods: [],
+                            },
+                        ],
+                    },
+                ],
             };
         },
 
@@ -817,6 +879,18 @@ export default {
             if (adapter.model === 'USB2Serial') {
                 if (adapter.com == null) adapter.com = '';
             }
+        },
+        toggleModelDropdown(ai) {
+            this.openModelDropdownIndex =
+                this.openModelDropdownIndex === ai ? -1 : ai;
+        },
+        selectModel(ai, model) {
+            this.localProfile.adapters[ai].model = model;
+            this.openModelDropdownIndex = -1;
+            this.onAdapterModelChange(ai);
+        },
+        closeModelDropdown() {
+            this.openModelDropdownIndex = -1;
         },
 
         // ----- Ports -----
@@ -1172,6 +1246,15 @@ export default {
     opacity: 0.6;
 }
 
+.section-hint {
+    font-size: 0.78rem;
+    font-style: italic;
+    color: c.$text-dark;
+    opacity: 0.6;
+    line-height: 1.4;
+    margin: -0.1rem 0 0.3rem;
+}
+
 // ---- Cards ----
 %card {
     background: #fff;
@@ -1235,9 +1318,70 @@ export default {
 }
 
 // ---- Adapter ----
-.adapter-model {
+.adapter-model-combo {
+    position: relative;
+    display: flex;
     flex: 0 0 auto;
+    align-items: stretch;
 }
+
+.adapter-model {
+    width: 11.5rem;
+    border-radius: 3px 0 0 3px;
+    border-right: none;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+    font-size: 0.82rem;
+}
+
+.model-chevron {
+    background: #fff;
+    border: 1px solid c.$border;
+    border-radius: 0 3px 3px 0;
+    cursor: pointer;
+    padding: 0 0.45rem;
+    font-size: 0.7rem;
+    color: c.$text-dark;
+    line-height: 1;
+
+    &:hover {
+        background: c.$zoom-button;
+    }
+}
+
+.model-dropdown {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 10;
+    background: #fff;
+    border: 1px solid c.$border;
+    border-radius: 3px;
+    list-style: none;
+    margin: 0;
+    padding: 2px 0;
+    max-height: 200px;
+    overflow-y: auto;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+
+    li {
+        padding: 0.25rem 0.5rem;
+        cursor: pointer;
+        font-size: 0.82rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+        color: c.$text-dark;
+
+        &:hover {
+            background: c.$zoom-button;
+        }
+
+        &.selected {
+            background: c.$zoom-button;
+            font-weight: 600;
+        }
+    }
+}
+
 .adapter-addr {
     flex: 1 1 140px;
     min-width: 0;

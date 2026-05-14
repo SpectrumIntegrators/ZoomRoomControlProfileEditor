@@ -3,7 +3,6 @@
         {
             "model": "GenericNetworkAdapter",
             "ip": "tcp://test-mc4-zoom:5000",
-            "uuid": "GlobalCache_000C1E051AEE",
             "ports": [
                 {
                     "id": "sl_dten_tv",
