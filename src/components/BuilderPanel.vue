@@ -33,10 +33,12 @@
             class="builder-content">
             <!-- ============== PROFILE-WIDE TOGGLES ============== -->
             <label class="cb-event-only">
-                <input
-                    type="checkbox"
-                    v-model="eventOnly" />
-                Events only
+                <span class="cb-event-only-row">
+                    <input
+                        type="checkbox"
+                        v-model="eventOnly" />
+                    Events only
+                </span>
                 <span class="cb-event-only-hint">
                     (hides the Native Room Controls UI in Zoom while still firing
                     event rules — used when a custom Zoom App provides the UI, so
@@ -75,6 +77,7 @@
                 </div>
                 <button
                     class="btn-add"
+                    title="Add another arbitrary key/value entry to the Info block (e.g. for project metadata you want to keep with the profile). Zoom Rooms ignores everything in Info — it's just for your reference."
                     @click="addInfoItem">
                     + Item
                 </button>
@@ -86,6 +89,7 @@
             <button
                 v-else
                 class="btn-add btn-add-section"
+                title="Add an optional Info block to hold metadata like customer / job / location. Zoom Rooms ignores this — it's purely for your reference."
                 @click="addInfo">
                 + Info
             </button>
@@ -285,16 +289,12 @@
                             <div
                                 v-for="(method, mi) in port.methods"
                                 :key="'method-' + mi"
-                                class="method-card">
+                                class="method-card"
+                                :class="{
+                                    'method-hidden': isMethodInvisible(port.id, method.id),
+                                    'method-main': getMainMethod(port.id) === method.id,
+                                }">
                                 <div class="method-row">
-                                    <input
-                                        type="radio"
-                                        class="cb-main-method"
-                                        :name="`main-${ai}-${pi}`"
-                                        :checked="getMainMethod(port.id) === method.id"
-                                        :disabled="!port.id || !method.id"
-                                        title="Set as main method"
-                                        @click="toggleMainMethod(port, method)" />
                                     <span class="row-label">Method</span>
                                     <input
                                         type="text"
@@ -327,19 +327,44 @@
                                         :value="getIcon([port.id, method.id])"
                                         :disabled="!port.id || !method.id"
                                         @input="setIcon([port.id, method.id], $event.target.value)" />
-                                    <label class="cb-invisible">
-                                        <input
-                                            type="checkbox"
-                                            :checked="isMethodInvisible(port.id, method.id)"
-                                            :disabled="!port.id || !method.id"
-                                            @change="setMethodInvisible(port, method, $event.target.checked)" />
-                                        invisible
-                                    </label>
                                     <button
                                         class="btn-delete"
                                         title="Remove method"
                                         @click="removeMethod(ai, pi, mi)">
                                         ×
+                                    </button>
+                                </div>
+                                <div class="method-toggles">
+                                    <button
+                                        type="button"
+                                        class="btn-method-toggle btn-main-method"
+                                        :class="{
+                                            active: getMainMethod(port.id) === method.id,
+                                            hidden: isMethodInvisible(port.id, method.id),
+                                        }"
+                                        :disabled="!port.id || !method.id || isMethodInvisible(port.id, method.id)"
+                                        :title="isMethodInvisible(port.id, method.id)
+                                            ? 'Main method unavailable while the method is hidden'
+                                            : getMainMethod(port.id) === method.id
+                                                ? 'This is the port\'s main method (click to unset)'
+                                                : 'Set as the port\'s main method'"
+                                        @click="toggleMainMethod(port, method)">
+                                        <span class="material-icons">{{
+                                            getMainMethod(port.id) === method.id ? 'star' : 'star_border'
+                                        }}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="btn-method-toggle btn-visibility"
+                                        :class="{ active: isMethodInvisible(port.id, method.id) }"
+                                        :disabled="!port.id || !method.id"
+                                        :title="isMethodInvisible(port.id, method.id)
+                                            ? 'Hidden in Zoom Rooms (click to make visible)'
+                                            : 'Visible in Zoom Rooms (click to hide)'"
+                                        @click="setMethodInvisible(port, method, !isMethodInvisible(port.id, method.id))">
+                                        <span class="material-icons">{{
+                                            isMethodInvisible(port.id, method.id) ? 'visibility_off' : 'visibility'
+                                        }}</span>
                                     </button>
                                 </div>
                                 <CommentRow
@@ -395,6 +420,7 @@
                                     </div>
                                     <button
                                         class="btn-add"
+                                        title="Add a parameter to this method (only used when type = 'actions'). The method's command string can substitute '%' with the param's value."
                                         @click="addParam(ai, pi, mi)">
                                         + Param
                                     </button>
@@ -402,6 +428,7 @@
                             </div>
                             <button
                                 class="btn-add"
+                                title="Add another method to this port (a method is a single command or a set of commands you can call by id, e.g. 'power.on')."
                                 @click="addMethod(ai, pi)">
                                 + Method
                             </button>
@@ -409,6 +436,7 @@
                     </div>
                     <button
                         class="btn-add"
+                        title="Add another port to this adapter. Each port represents a connected device (or relay channel for iTachIP2CC)."
                         @click="addPort(ai)">
                         + Port
                     </button>
@@ -416,6 +444,7 @@
             </div>
             <button
                 class="btn-add btn-add-section"
+                title="Add another adapter (a network or USB-serial bridge that hosts one or more device ports)."
                 @click="addAdapter">
                 + Adapter
             </button>
@@ -477,6 +506,7 @@
                     </div>
                     <button
                         class="btn-add"
+                        title="Add a command to run when this scene fires. Commands reference an existing method as port.method[.param], e.g. display.power.on."
                         @click="addSceneCommand(si)">
                         + Command
                     </button>
@@ -484,6 +514,7 @@
             </div>
             <button
                 class="btn-add btn-add-section"
+                title="Add a scene — a button shown at the top of the Native Room Controls UI that fires a list of commands when pressed."
                 @click="addScene">
                 + Scene
             </button>
@@ -522,6 +553,7 @@
             </div>
             <button
                 class="btn-add btn-add-section"
+                title="Add a raw style entry — used for style patterns the builder doesn't have a dedicated control for yet. Format is 'key.path=value'."
                 @click="addStyle">
                 + Style
             </button>
@@ -569,6 +601,7 @@
                     </div>
                     <button
                         class="btn-add"
+                        title="Add a command to run when this event fires. Commands reference an existing method as port.method[.param]."
                         @click="addRuleCommand(event)">
                         + Command
                     </button>
@@ -576,6 +609,7 @@
             </div>
             <button
                 class="btn-add btn-add-section"
+                title="Add a rule — binds a Zoom event (zr_meeting_started, zr_meeting_ended, custom events from response filters, etc.) to a list of commands to run automatically."
                 @click="addRule">
                 + Rule
             </button>
@@ -626,6 +660,7 @@
             </div>
             <button
                 class="btn-add btn-add-section"
+                title="Add a response filter — watches incoming data from a port for a regex match and fires a custom event (referenced by a rule) when it matches."
                 @click="addFilter">
                 + Filter
             </button>
@@ -654,7 +689,11 @@ const CommentRow = {
                 placeholder="comment text" />
             <button class="btn-delete" title="Remove comment" @click="$emit('remove')">×</button>
         </div>
-        <button v-else class="btn-comment" @click="$emit('add')">+ Comment</button>
+        <button
+            v-else
+            class="btn-comment"
+            title="Add a $comment field to this item — free-form text for documenting why something is set up the way it is. Zoom Rooms (and the schema validator) ignore $comment entirely; it's only for humans reading the JSON later."
+            @click="$emit('add')">+ Comment</button>
     `,
     computed: {
         hasComment() {
@@ -1415,6 +1454,13 @@ export default {
                 (s) => !s.startsWith(prefix),
                 invisible ? `${port.id}.${method.id}.invisible=true` : null
             );
+            // Hiding a method shouldn't leave it dangling as the port's main
+            // method — the renderer would surface it in the port header even
+            // though the user marked it invisible. Clear the main-method
+            // selection so the star toggle reads zero-selected too.
+            if (invisible && this.getMainMethod(port.id) === method.id) {
+                this.setMainMethod(port.id, null);
+            }
         },
 
         // ----- icons (styles-backed) -----
@@ -1564,9 +1610,9 @@ export default {
 
 .cb-event-only {
     display: flex;
-    flex-direction: row;
-    align-items: baseline;
-    gap: 0.4rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
     font-size: 0.85rem;
     color: c.$text-dark;
     cursor: pointer;
@@ -1577,6 +1623,12 @@ export default {
         cursor: pointer;
     }
 
+    .cb-event-only-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+
     .cb-event-only-hint {
         font-size: 0.75rem;
         font-style: italic;
@@ -1584,13 +1636,75 @@ export default {
     }
 }
 
-.cb-main-method {
+// Below-method toggle row: star (main method) + eye (visibility). Lives on
+// its own line under the busy top method row, indented to align under the
+// method's input columns rather than under the row label.
+.method-toggles {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.9rem;
+}
+
+.btn-method-toggle {
+    @include b.btn-shared;
     flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: #b8bcc4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
+
+    .material-icons {
+        font-size: 18px;
+    }
 
     &:disabled {
         cursor: not-allowed;
         opacity: 0.4;
+    }
+}
+
+// Star: outlined gray when not main, filled gold when set. Faded out when
+// the method is hidden (kept in flow with visibility:hidden so the eye stays
+// in the same horizontal position regardless of state).
+.btn-main-method {
+    &:hover:not(:disabled) {
+        color: #d9a700;
+    }
+
+    &.active {
+        color: #f1b300;
+
+        &:hover {
+            color: #c89500;
+        }
+    }
+
+    &.hidden {
+        visibility: hidden;
+    }
+}
+
+// Eye: open gray when visible, crossed firebrick when hidden. The "active"
+// state is when the method has been marked invisible — the red signals "this
+// won't show up in Zoom".
+.btn-visibility {
+    &:hover:not(:disabled) {
+        color: c.$text-dark;
+    }
+
+    &.active {
+        color: firebrick;
+
+        &:hover {
+            color: #a02020;
+        }
     }
 }
 
@@ -1602,28 +1716,6 @@ export default {
 
     &:disabled {
         opacity: 0.5;
-        cursor: not-allowed;
-    }
-}
-
-.cb-invisible {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    font-size: 0.72rem;
-    color: c.$text-dark;
-    opacity: 0.75;
-    cursor: pointer;
-    user-select: none;
-    flex: 0 0 auto;
-
-    input[type='checkbox'] {
-        cursor: pointer;
-        margin: 0;
-    }
-
-    &:has(input:disabled) {
-        opacity: 0.4;
         cursor: not-allowed;
     }
 }
@@ -1893,6 +1985,22 @@ export default {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+
+    // Hidden methods read as "ghost" rows — same footprint, dashed border so
+    // it's visible in the GUI builder that this one won't render in Zoom.
+    // border-style swap doesn't change the box width, so no layout shift.
+    &.method-hidden {
+        border-style: dashed;
+    }
+
+    // Main method gets a gold inner ring (matches the gold star toggle) layered
+    // on top of the existing 1px border, creating a "doubled" border effect
+    // without changing the actual border width — toggling on/off doesn't
+    // reflow surrounding content. Box-shadow rather than outline so this can
+    // coexist with the required-field cascade outline.
+    &.method-main {
+        box-shadow: inset 0 0 0 2px rgba(241, 179, 0, 0.55);
+    }
 }
 
 .method-row {
