@@ -900,11 +900,9 @@ $zoom-button-height: 58px;
     }
 
     .preview-banner {
-        background: #fef3c7;
-        border: 1px solid #f59e0b;
-        color: #78350f;
-        padding: 0.5rem 0.75rem;
-        border-radius: 6px;
+        color: firebrick;
+        font-style: italic;
+        padding: 0.25rem 0.25rem;
         font-size: 0.85rem;
         line-height: 1.4;
     }
