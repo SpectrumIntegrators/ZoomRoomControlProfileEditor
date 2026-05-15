@@ -8,7 +8,7 @@ export const SCHEMA_URL =
 
 // Stamped into `info.tool` on new profiles and on download so downstream
 // consumers can trace the file back to this editor.
-export const EDITOR_URL = 'https://zoom.spectrumintegrators.com';
+export const EDITOR_URL = 'https://zoom.spectrumintegrators.us';
 
 // YYYY-MM-DD in local time. Date.toISOString uses UTC, which can drift a day
 // off near midnight; build the string from local components.
