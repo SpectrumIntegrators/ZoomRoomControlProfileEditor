@@ -17,8 +17,11 @@
                 <BuilderPanel
                     :profile="rawProfile"
                     :errorTargets="errorTargets"
+                    :canScreenshot="canScreenshot"
+                    :screenshotBusy="screenshotBusy"
                     @update:json="onBuilderEdit"
                     @download="onDownload"
+                    @screenshot="takeScreenshot"
                     @profile-reset="onProfileReset" />
             </div>
         </Pane>
@@ -148,6 +151,7 @@
                                 'event-only-shown': calculatedControls && calculatedControls.eventOnly,
                                 'dark-theme': previewDark,
                                 'variant-ipad': previewVariant === 'ipad',
+                                'screenshot-mode': screenshotBusy,
                             }"
                             v-if="calculatedControls != null && shouldRenderControls">
                             <div
@@ -204,7 +208,7 @@
                                             <p>{{ port.name }}</p>
                                         </div>
                                         <div
-                                            v-if="port.main_method && (!port.main_method.userHidden || showHidden)"
+                                            v-if="port.main_method && (!port.main_method.userHidden || effectiveShowHidden)"
                                             :class="{
                                                 'main-method-area': true,
                                                 'hidden-control':
@@ -275,7 +279,7 @@
                                             v-for="(method, mi) in port.methods"
                                             :key="mi">
                                             <div
-                                                v-if="!method.rolledUp && (method.visible || showHidden)"
+                                                v-if="!method.rolledUp && (method.visible || effectiveShowHidden)"
                                                 class="method"
                                                 :class="{
                                                     'hidden-control':
@@ -685,6 +689,7 @@ import { eventLabel } from '@/data/zoomEvents';
 import { Codemirror } from 'vue-codemirror';
 import { json as cmJsonLang } from '@codemirror/lang-json';
 import { jsonSchema as cmJsonSchema } from 'codemirror-json-schema';
+import { toBlob as htmlToBlob, getFontEmbedCSS as htmlGetFontEmbedCSS } from 'html-to-image';
 
 // Vite replacement for webpack's require.context. Eagerly imports every PNG
 // under zoom_icons/{dark,light}/ as a URL and indexes them by the filename
@@ -848,6 +853,14 @@ export default {
         _dragDepth: 0,
         // Internal: throttle id for JSON-modified log entries.
         _jsonLogTimer: null,
+        // Screenshot button: in-flight flag (disables the button while
+        // html-to-image is rasterizing) and lazily-fetched font-embed CSS.
+        // The Material Icons + Lato webfaces live on fonts.googleapis.com;
+        // the first capture pulls their CSS once via html-to-image's
+        // helper and we re-use the resulting string for every subsequent
+        // capture so we're not hitting Google Fonts on every click.
+        screenshotBusy: false,
+        _screenshotFontCss: null,
     }),
     created() {
         loadRemoteSchema();
@@ -1026,6 +1039,112 @@ export default {
                 this.paletteVisible = true;
                 this.logVisible = false;
                 this.injectionVisible = false;
+            }
+        },
+        // Rasterize the rendered preview (`#zoom-controls`) to a PNG via
+        // html-to-image and trigger a download. Captures whatever theme
+        // (light/dark) the user has selected; uses the current scrollHeight
+        // so the entire control list is included rather than just the
+        // visible viewport. The right-side drawers (log/injection/palette)
+        // are siblings of `#zoom-controls`, not children, so they're
+        // naturally excluded without us having to hide them first.
+        async takeScreenshot() {
+            if (this.screenshotBusy) return;
+            if (!this.canScreenshot) {
+                this.pushLog({
+                    level: 'warn',
+                    message: 'Screenshot: nothing to capture (no controls rendered).',
+                });
+                return;
+            }
+            this.screenshotBusy = true;
+            // Flipping `screenshotBusy` flips `effectiveShowHidden` to false
+            // and adds `screenshot-mode` to `#zoom-controls` (which hides the
+            // dashed-red error outlines). Wait for Vue to re-render those
+            // before html-to-image walks the DOM, otherwise the snapshot
+            // captures the stale tree.
+            await this.$nextTick();
+            const node = document.getElementById('zoom-controls');
+            if (!node) {
+                this.screenshotBusy = false;
+                this.pushLog({
+                    level: 'warn',
+                    message: 'Screenshot: nothing to capture (no controls rendered).',
+                });
+                return;
+            }
+            try {
+                // The preview's background lives on `#preview` rather than
+                // on `#zoom-controls` itself, so html-to-image would render
+                // transparent corners by default. Sample the actual pane
+                // background so the exported PNG matches what the user sees.
+                const previewEl = document.getElementById('preview');
+                const bg = previewEl
+                    ? getComputedStyle(previewEl).backgroundColor
+                    : (this.previewDark ? '#1a1a1a' : '#ffffff');
+
+                // Cache the Google Fonts CSS+WOFF embed across captures —
+                // it's the slowest part and doesn't change between clicks.
+                if (this._screenshotFontCss == null) {
+                    try {
+                        this._screenshotFontCss = await htmlGetFontEmbedCSS(node);
+                    } catch {
+                        // Network blocked or CORS issue — fall back to letting
+                        // html-to-image try (and possibly fail) on each call
+                        // rather than wedging the feature entirely. Empty
+                        // string means "I have no font CSS to contribute,"
+                        // so skip the option to let the default path run.
+                        this._screenshotFontCss = '';
+                    }
+                }
+
+                const options = {
+                    backgroundColor: bg,
+                    pixelRatio: 2,
+                    cacheBust: true,
+                };
+                if (this._screenshotFontCss) {
+                    options.fontEmbedCSS = this._screenshotFontCss;
+                }
+
+                const blob = await htmlToBlob(node, options);
+                if (!blob) throw new Error('html-to-image returned no blob');
+
+                // Filename mirrors the JSON-download naming but with
+                // "Screenshot" in place of "Profile" and a .png extension.
+                let info = {};
+                try {
+                    const parsed = JSON.parse(this.json);
+                    info = parsed && parsed.info ? parsed.info : {};
+                } catch {
+                    // No info available — fall back to the generic name.
+                }
+                const parts = [info.customer, info.location, 'Zoom Room Control Screenshot']
+                    .map((s) => (typeof s === 'string' ? s.trim() : ''))
+                    .filter(Boolean);
+                const filename = `${parts.join(' ')}.png`;
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                this.pushLog({
+                    level: 'info',
+                    message: `Screenshot saved: ${filename}`,
+                });
+            } catch (err) {
+                this.pushLog({
+                    level: 'error',
+                    message: 'Screenshot failed',
+                    details: [String(err && err.message ? err.message : err)],
+                });
+            } finally {
+                this.screenshotBusy = false;
             }
         },
         // Helper used by the template — wraps a Material Icon name in our
@@ -1597,6 +1716,33 @@ export default {
             if (ctrl.eventOnly && !this.showHidden) return false;
             return true;
         },
+        // Stricter than `shouldRenderControls` — gates the screenshot button.
+        // We refuse to capture when:
+        //   - JSON doesn't parse (calculatedControls is null), or
+        //   - the profile is event-only (Zoom hides the UI entirely; even
+        //     if the user has "Show hidden controls" on, what they'd see
+        //     in Zoom is nothing, so screenshotting the testing-only view
+        //     would misrepresent reality).
+        // No check for validation warnings — those are advisory, the
+        // controls still render the way Zoom would render them, and the
+        // red error outlines are suppressed during capture via the
+        // `screenshot-mode` class on `#zoom-controls`.
+        canScreenshot() {
+            const ctrl = this.calculatedControls;
+            if (!ctrl) return false;
+            if (ctrl.eventOnly) return false;
+            return true;
+        },
+        // Render-path override for `showHidden` that flips back to false
+        // while a screenshot is in flight. Lets the user keep "Show hidden
+        // controls" on for editing without leaking the testing-only items
+        // into the exported PNG — Zoom never shows hidden methods, so the
+        // screenshot shouldn't either. We don't touch `showHidden` itself
+        // (the checkbox stays as the user set it); only the v-ifs that
+        // actually decide whether hidden methods render consult this.
+        effectiveShowHidden() {
+            return this.showHidden && !this.screenshotBusy;
+        },
         visibleScenes() {
             if (!this.calculatedControls || !this.calculatedControls.scenes) return [];
             const scenes = this.calculatedControls.scenes;
@@ -2057,6 +2203,16 @@ $zoom-button-height: 58px;
         .btn-zoom.preview-error,
         .btn-scene.preview-error {
             outline-offset: -1px;
+        }
+
+        // While a screenshot is being taken, suppress the validator-error
+        // outlines so the exported PNG matches what Zoom would actually
+        // render (Zoom doesn't paint red dashes around mismatched fields —
+        // those are an editor-only affordance). Hidden methods are handled
+        // separately by the `effectiveShowHidden` computed switching off
+        // the v-if for `.hidden-control` items during capture.
+        &.screenshot-mode .preview-error {
+            outline: none;
         }
 
         // When zr_event_only=true is set and the user has chosen to peek, the

@@ -28,12 +28,26 @@
                     <span class="material-icons">download</span>
                 </button>
                 <button
+                    class="btn-icon"
+                    :disabled="!canScreenshot || screenshotBusy"
+                    :title="screenshotTitle"
+                    @click="$emit('screenshot')">
+                    <span class="material-icons">photo_camera</span>
+                </button>
+                <button
                     class="btn-icon btn-icon-help"
-                    title="Editing tips"
+                    title="About & Editing tips"
                     @click="helpVisible = true">
                     <span class="material-icons">help_outline</span>
                 </button>
             </div>
+            <span
+                v-if="screenshotBusy"
+                class="builder-status"
+                aria-live="polite">
+                <span class="material-icons spin">progress_activity</span>
+                Saving screenshot…
+            </span>
         </header>
 
         <!-- The Events-only checkbox used to live up here; it moved into the
@@ -998,7 +1012,7 @@
                     <section>
                         <h3>Zoom Room Control Profile Editor</h3>
                         <p>
-                            Built by
+                            Built by <a href="https://github.com/ke4ukz" target="_blank" rel="noopener noreferrer">Jonathan Dean</a> at 
                             <a href="https://spectrumintegrators.com" target="_blank" rel="noopener noreferrer">Spectrum Integrators</a>
                             for the AV / Zoom Rooms community.
                             Free, open-source, no analytics, no signup. Profile
@@ -1465,8 +1479,22 @@ export default {
                 scenes: new Set(),
             }),
         },
+        // Whether the preview has anything renderable to screenshot. False
+        // when the JSON doesn't parse or when the profile is event-only
+        // without "Show hidden controls" enabled. Drives the camera
+        // button's disabled state and tooltip.
+        canScreenshot: {
+            type: Boolean,
+            default: false,
+        },
+        // True while a screenshot rasterize is in flight — disables the
+        // button so a second click doesn't queue another capture.
+        screenshotBusy: {
+            type: Boolean,
+            default: false,
+        },
     },
-    emits: ['update:json', 'download', 'profile-reset'],
+    emits: ['update:json', 'download', 'profile-reset', 'screenshot'],
     data() {
         // Build the initial info entries from the prop. Each entry has a
         // stable id so the array can hold duplicate keys without v-for
@@ -1545,6 +1573,11 @@ export default {
         };
     },
     computed: {
+        screenshotTitle() {
+            if (this.screenshotBusy) return 'Saving screenshot…';
+            if (!this.canScreenshot) return 'No controls to capture';
+            return 'Save preview as PNG';
+        },
         // Flat list of keys currently held by the entries array. Includes
         // duplicates intentionally — InfoRow's conflict detection counts
         // occurrences against this list so two entries with the same key
@@ -2362,6 +2395,33 @@ export default {
     flex-direction: row;
     align-items: center;
     gap: 0.3rem;
+}
+
+// Transient status text shown to the right of the action buttons while a
+// long-running toolbar action is in flight (currently just the screenshot
+// render — html-to-image's rasterize takes ~1-2 s on a complex profile and
+// the cursor-only `wait` was easy to miss). `aria-live="polite"` in the
+// template ensures screen readers announce it when it appears.
+.builder-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: c.$text-dark;
+    opacity: 0.7;
+    font-size: 0.85rem;
+    font-style: italic;
+
+    .material-icons {
+        font-size: 16px;
+        line-height: 1;
+    }
+    .spin {
+        animation: builder-status-spin 1s linear infinite;
+    }
+}
+
+@keyframes builder-status-spin {
+    to { transform: rotate(360deg); }
 }
 
 .file-input-hidden {

@@ -12,16 +12,17 @@ A builder, validator, and preview tool for [Zoom Native Room Controls](https://s
 - Fully-featured JSON editor (autocomplete, folding, error highlighting, help text)
 - Two-way sync between JSON text and builder GUI
 - Command output preview for individual commands, scenes, and event rules
+- Response injection to test response filters
 - Activity log to investigate sequence flow
 - Resizable panes - focus on the part that matters to you
 - Schema validation to make sure your file follows what Zoom expects
 - Visual indication of empty or invalid fields - easily see where errors are
 - Forgiving validation - if Zoom adds something (or I missed something!), you can still generate a profile even if schema validation fails
-- Open files from your computer and download your work to save
+- Open files from your computer, download your work to save
+- Icon pallet - search for and browse available icons
+- Image export - download the Zoom UI as a PNG
 
 ## Coming soon
-- Icon pallet
-- Image export
 - Templates for common devices
 
 ## Editing tips
