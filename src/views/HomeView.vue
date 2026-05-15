@@ -74,11 +74,20 @@
                                         class="btn-theme-toggle"
                                         :class="{ active: logVisible }"
                                         :title="logButtonTitle"
-                                        @click="logVisible = !logVisible">
+                                        @click="toggleLog">
                                         <span class="material-icons">receipt_long</span>
                                         <span
                                             v-if="logUnreadCount > 0"
                                             class="log-badge">{{ logUnreadCount }}</span>
+                                    </button>
+                                    <button
+                                        class="btn-theme-toggle"
+                                        :class="{ active: injectionVisible }"
+                                        :title="injectionVisible
+                                            ? 'Hide response injection'
+                                            : 'Show response injection — simulate data arriving from a device'"
+                                        @click="toggleInjection">
+                                        <span class="material-icons">input</span>
                                     </button>
                                 </div>
                             </div>
@@ -346,45 +355,11 @@
                             <div class="log-drawer-header">
                                 <span class="log-title">Activity Log</span>
                                 <button
-                                    class="log-inject-toggle"
-                                    :class="{ active: injectionExpanded }"
-                                    :title="injectionExpanded ? 'Hide response injection' : 'Show response injection — simulate data arriving on a port'"
-                                    @click="injectionExpanded = !injectionExpanded">
-                                    <span class="material-icons">input</span>
-                                </button>
-                                <button
                                     class="log-close"
                                     title="Hide log"
                                     @click="logVisible = false">
                                     <span class="material-icons">close</span>
                                 </button>
-                            </div>
-                            <div
-                                v-if="injectionExpanded"
-                                class="log-inject-panel">
-                                <p class="log-inject-hint">
-                                    Run a simulated device reply through every defined
-                                    response filter. Backslash escapes
-                                    (<code>\r</code>, <code>\n</code>, <code>\t</code>,
-                                    <code>\xAA</code>) in the input are decoded to actual
-                                    bytes before the regex runs.
-                                </p>
-                                <label class="log-inject-row">
-                                    <span class="log-inject-label">Bytes</span>
-                                    <input
-                                        type="text"
-                                        v-model="injectionBytes"
-                                        placeholder="e.g. Login:\r\n"
-                                        @keydown.enter.prevent="runInjection" />
-                                </label>
-                                <div class="log-inject-actions">
-                                    <button
-                                        class="log-inject-fire"
-                                        :disabled="!injectionBytes"
-                                        @click="runInjection">
-                                        Inject
-                                    </button>
-                                </div>
                             </div>
                             <div class="log-scroll">
                                 <p
@@ -421,6 +396,45 @@
                                     @click="clearLog">
                                     <span class="material-icons">delete_outline</span>
                                 </button>
+                            </div>
+                        </aside>
+                        <aside
+                            v-if="injectionVisible"
+                            class="injection-drawer">
+                            <div class="injection-drawer-header">
+                                <span class="injection-title">Response Injection</span>
+                                <button
+                                    class="log-close"
+                                    title="Hide response injection"
+                                    @click="injectionVisible = false">
+                                    <span class="material-icons">close</span>
+                                </button>
+                            </div>
+                            <div class="injection-drawer-body">
+                                <p class="injection-hint">
+                                    Run a simulated device reply through every defined
+                                    response filter. Backslash escapes
+                                    (<code>\r</code>, <code>\n</code>, <code>\t</code>,
+                                    <code>\xAA</code>) in the input are decoded to actual
+                                    bytes before the regex runs. Filter matches and any
+                                    triggered events show up in the Activity Log.
+                                </p>
+                                <label class="injection-row">
+                                    <span class="injection-label">Bytes</span>
+                                    <input
+                                        type="text"
+                                        v-model="injectionBytes"
+                                        placeholder="e.g. Login:\r\n"
+                                        @keydown.enter.prevent="runInjection" />
+                                </label>
+                                <div class="injection-actions">
+                                    <button
+                                        class="injection-fire"
+                                        :disabled="!injectionBytes"
+                                        @click="runInjection">
+                                        Inject
+                                    </button>
+                                </div>
                             </div>
                         </aside>
                     </div>
@@ -672,10 +686,11 @@ export default {
         logEntries: [],
         logVisible: false,
         logUnreadCount: 0,
-        // Response-injection UI state: expanded panel above the log scroll
-        // and the bytes the user wants to fake. Kept in HomeView so the
-        // input survives opening / closing the drawer.
-        injectionExpanded: false,
+        // Response-injection drawer. Sibling to the activity log drawer
+        // (same overlay shape, separate toggle in the preview toolbar);
+        // mutually exclusive with the log drawer because they share the
+        // same right-edge slot. Bytes survive opening/closing.
+        injectionVisible: false,
         injectionBytes: '',
         // Non-reactive container for CodeMirror's EditorView. Vue 3 reserves
         // `_`/`$` -prefixed property names, so we hang the view off a regular
@@ -819,6 +834,25 @@ export default {
         clearOutput() {
             this.target = '';
             this.commands = [];
+        },
+        // The log drawer and injection drawer share the right-edge overlay
+        // slot in the preview pane. Opening either closes the other so they
+        // don't fight for the same real estate.
+        toggleLog() {
+            if (this.logVisible) {
+                this.logVisible = false;
+            } else {
+                this.logVisible = true;
+                this.injectionVisible = false;
+            }
+        },
+        toggleInjection() {
+            if (this.injectionVisible) {
+                this.injectionVisible = false;
+            } else {
+                this.injectionVisible = true;
+                this.logVisible = false;
+            }
         },
         // Fires when BuilderPanel reset the profile (New button) or loaded
         // a different one (Open / drag-drop). The output preview and the
@@ -2298,78 +2332,96 @@ $zoom-button-height: 58px;
         margin-right: auto;
     }
 
-    .log-inject-toggle {
-        @include b.btn-shared;
-        background: transparent;
-        border: 1px solid transparent;
-        border-radius: 3px;
-        padding: 2px;
-        color: c.$text-dark;
-        opacity: 0.6;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-
-        .material-icons { font-size: 18px; }
-        &:hover { opacity: 1; }
-        &.active {
-            opacity: 1;
-            background: rgba(0, 0, 0, 0.08);
-            border-color: c.$border;
-        }
-    }
-
-    .log-close {
-        @include b.btn-shared;
-        background: transparent;
-        border: none;
-        padding: 2px;
-        color: c.$text-dark;
-        opacity: 0.6;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-
-        .material-icons { font-size: 18px; }
-        &:hover { opacity: 1; }
-    }
 }
 
-// Response-injection panel sits above the log scroll when expanded. Lets
-// the user simulate a device-reply payload arriving on a chosen port and
-// see which filter (if any) Zoom would route the data through.
-.log-inject-panel {
-    flex: 0 0 auto;
+// Shared close-button styling for the log and injection drawer headers.
+// Previously nested under `.log-drawer-header`, which left the injection
+// drawer's matching button with default browser styling.
+.log-close {
+    @include b.btn-shared;
+    background: transparent;
+    border: none;
+    padding: 2px;
+    color: c.$text-dark;
+    opacity: 0.6;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    .material-icons { font-size: 18px; }
+    &:hover { opacity: 1; }
+}
+
+// Response-injection drawer. Sibling to the log drawer — same overlay
+// shape on the right edge of the preview, mutually exclusive with the log
+// drawer because they share that slot. Bytes get decoded for escapes and
+// run through every defined filter; matches/events spill into the activity
+// log (the user opens the log to inspect the trace).
+.injection-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: clamp(280px, 36%, 420px);
+    background: #fff;
+    border-left: 1px solid c.$border;
+    box-shadow: -4px 0 10px rgba(0, 0, 0, 0.06);
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-    padding: 0.5rem 0.6rem;
-    border-bottom: 1px solid c.$border;
-    background: rgba(0, 0, 0, 0.02);
-    font-size: 0.78rem;
+    z-index: 5;
 }
 
-.log-inject-hint {
+.injection-drawer-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid c.$border;
+
+    .injection-title {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: c.$text-dark;
+        opacity: 0.75;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-right: auto;
+    }
+}
+
+.injection-drawer-body {
+    flex: 1 1 auto;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.82rem;
+}
+
+.injection-hint {
     margin: 0;
     color: c.$text-dark;
-    opacity: 0.75;
-    line-height: 1.4;
+    opacity: 0.8;
+    line-height: 1.45;
 
     code {
         background: #e8e8ec;
         border-radius: 2px;
         padding: 0 3px;
-        font-size: 0.85em;
+        font-size: 0.9em;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
     }
 }
 
-.log-inject-row {
+.injection-row {
     display: flex;
     align-items: center;
     gap: 0.4rem;
 
-    .log-inject-label {
-        flex: 0 0 38px;
+    .injection-label {
+        flex: 0 0 42px;
         text-transform: uppercase;
         font-size: 0.68rem;
         font-weight: 600;
@@ -2377,34 +2429,30 @@ $zoom-button-height: 58px;
         letter-spacing: 0.04em;
     }
 
-    select, input {
+    input {
         flex: 1 1 auto;
         min-width: 0;
-        font-size: 0.82rem;
-        padding: 3px 6px;
+        font-size: 0.85rem;
+        padding: 4px 7px;
         border: 1px solid c.$border;
         border-radius: 3px;
-        font-family: inherit;
-    }
-
-    input {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
     }
 }
 
-.log-inject-actions {
+.injection-actions {
     display: flex;
     justify-content: flex-end;
 }
 
-.log-inject-fire {
+.injection-fire {
     @include b.btn-shared;
     background: c.$accent;
     color: #fff;
     border: none;
     border-radius: 3px;
-    padding: 0.25rem 0.75rem;
-    font-size: 0.78rem;
+    padding: 0.3rem 0.9rem;
+    font-size: 0.82rem;
 
     &:disabled {
         opacity: 0.4;
