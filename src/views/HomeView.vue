@@ -18,7 +18,8 @@
                     :profile="rawProfile"
                     :errorTargets="errorTargets"
                     @update:json="onBuilderEdit"
-                    @download="onDownload" />
+                    @download="onDownload"
+                    @profile-reset="onProfileReset" />
             </div>
         </Pane>
         <Pane
@@ -819,6 +820,14 @@ export default {
             this.target = '';
             this.commands = [];
         },
+        // Fires when BuilderPanel reset the profile (New button) or loaded
+        // a different one (Open / drag-drop). The output preview and the
+        // activity log both belong to the previous profile's runtime
+        // state, so wipe them along with the document.
+        onProfileReset() {
+            this.clearOutput();
+            this.clearLog();
+        },
         logTrigger(kind, label, commands) {
             // Build one log entry for a user-initiated trigger (scene button,
             // event button, or direct control press). Each resolved command is
@@ -1016,6 +1025,10 @@ export default {
             const reader = new FileReader();
             reader.onload = () => {
                 const text = String(reader.result || '');
+                // Wipe state from the previous profile first, then install
+                // the dropped file and log a single "loaded file" entry
+                // that's visible after the clear.
+                this.onProfileReset();
                 this.json = text;
                 this.pushLog({
                     level: 'info',

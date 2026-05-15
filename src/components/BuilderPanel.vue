@@ -1275,7 +1275,7 @@ export default {
             }),
         },
     },
-    emits: ['update:json', 'download'],
+    emits: ['update:json', 'download', 'profile-reset'],
     data() {
         // Build the initial info entries from the prop. Each entry has a
         // stable id so the array can hold duplicate keys without v-for
@@ -1575,6 +1575,10 @@ export default {
             // the seed data immediately rather than waiting for the prop
             // round-trip to populate it.
             this.syncEntriesFromInfo(info);
+            // Let HomeView wipe the output preview and activity log too —
+            // they belong to the old profile and would just confuse the
+            // user staring at a fresh document.
+            this.$emit('profile-reset');
         },
         openProfile() {
             if (!confirm('Replace the current profile with one from a file? Current edits will be lost.')) {
@@ -1598,6 +1602,9 @@ export default {
                 // error will surface in the preview just like a bad paste —
                 // we don't pre-validate here so a partially-broken file
                 // still loads for the user to fix in the editor.
+                // Wipe the output preview and activity log first — they
+                // belong to the previous profile, not this newly-loaded one.
+                this.$emit('profile-reset');
                 this.$emit('update:json', text);
             };
             reader.onerror = () => {
