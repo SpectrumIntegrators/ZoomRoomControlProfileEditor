@@ -224,7 +224,8 @@
                                 title="Icon (e.g. icon_alert, mdi:lamp:filled)"
                                 :value="getIcon([port.id])"
                                 :disabled="!port.id"
-                                @input="setIcon([port.id], $event.target.value)" />
+                                @input="setIcon([port.id], $event.target.value)"
+                                @focus="iconFocusTracker.set($event.target)" />
                             <button
                                 class="btn-delete"
                                 title="Remove port"
@@ -357,7 +358,8 @@
                                         title="Icon (e.g. icon_alert, mdi:lamp:filled)"
                                         :value="getIcon([port.id, method.id])"
                                         :disabled="!port.id || !method.id"
-                                        @input="setIcon([port.id, method.id], $event.target.value)" />
+                                        @input="setIcon([port.id, method.id], $event.target.value)"
+                                        @focus="iconFocusTracker.set($event.target)" />
                                     <button
                                         class="btn-delete"
                                         title="Remove method"
@@ -442,7 +444,8 @@
                                                 title="Icon (e.g. icon_alert, mdi:lamp:filled)"
                                                 :value="getIcon([port.id, method.id, param.id])"
                                                 :disabled="!port.id || !method.id || !param.id"
-                                                @input="setIcon([port.id, method.id, param.id], $event.target.value)" />
+                                                @input="setIcon([port.id, method.id, param.id], $event.target.value)"
+                                                @focus="iconFocusTracker.set($event.target)" />
                                             <button
                                                 class="btn-delete"
                                                 title="Remove param"
@@ -510,7 +513,8 @@
                         type="text"
                         class="scene-icon"
                         placeholder="icon (optional)"
-                        v-model="scene.icon" />
+                        v-model="scene.icon"
+                        @focus="iconFocusTracker.set($event.target)" />
                     <button
                         class="btn-delete"
                         title="Remove scene"
@@ -779,6 +783,15 @@
                             @click="helpActiveTab = 'quirks'">
                             Undocumented but Confirmed Behavior
                         </button>
+                        <button
+                            type="button"
+                            role="tab"
+                            class="help-tab"
+                            :class="{ active: helpActiveTab === 'about' }"
+                            :aria-selected="helpActiveTab === 'about'"
+                            @click="helpActiveTab = 'about'">
+                            About
+                        </button>
                     </div>
                     <button
                         class="help-close"
@@ -887,7 +900,7 @@
                     </section>
                 </div>
                 <div
-                    v-else
+                    v-else-if="helpActiveTab === 'quirks'"
                     class="help-card-body"
                     role="tabpanel">
                     <p class="help-quirks-intro">
@@ -978,6 +991,148 @@
                         </li>
                     </ul>
                 </div>
+                <div
+                    v-else-if="helpActiveTab === 'about'"
+                    class="help-card-body"
+                    role="tabpanel">
+                    <section>
+                        <h3>Zoom Room Control Profile Editor</h3>
+                        <p>
+                            Built by
+                            <a href="https://spectrumintegrators.com" target="_blank" rel="noopener noreferrer">Spectrum Integrators</a>
+                            for the AV / Zoom Rooms community.
+                            Free, open-source, no analytics, no signup. Profile
+                            data stays in your browser unless you click
+                            <strong>Download</strong>.
+                        </p>
+                        <p>
+                            Source on
+                            <a href="https://github.com/SpectrumIntegrators/ZoomRoomControlProfileEditor"
+                                target="_blank"
+                                rel="noopener noreferrer">GitHub</a>.
+                            File an issue or open a PR if you find a bug or
+                            want to suggest something.
+                        </p>
+                    </section>
+                    <section class="help-disclaimer">
+                        <h3>Disclaimer</h3>
+                        <p>
+                            This tool is published as-is for convenience.
+                            Profiles you generate are <strong>not
+                            guaranteed</strong> to load successfully on any
+                            given Zoom Room, work with any specific device,
+                            or behave correctly in production — Zoom's
+                            behavior can and does change between releases,
+                            our validator catches what it can but isn't
+                            exhaustive, and your hardware may simply not
+                            cooperate. Test on a non-production room before
+                            deploying to a customer site.
+                        </p>
+                        <p>
+                            No warranty is given, express or implied.
+                            Spectrum Integrators accepts no liability for
+                            any damages, loss of business, downtime, or
+                            other consequences arising from use of this
+                            tool or of the profiles it produces. We're
+                            not affiliated with, endorsed by, or
+                            sponsored by Zoom Communications, Inc.
+                        </p>
+                    </section>
+                    <section>
+                        <h3>Attribution</h3>
+                        <p>
+                            This project is a fork of
+                            <a href="https://github.com/jeffderek/zoom-native-room-controls-preview"
+                                target="_blank"
+                                rel="noopener noreferrer"><code>zoom-native-room-controls-preview</code></a>
+                            by
+                            <a href="https://www.jeffmcaleer.com"
+                                target="_blank"
+                                rel="noopener noreferrer">Jeff McAleer</a>,
+                            used under the MIT License. The majority of
+                            the Zoom controls preview itself is inherited
+                            from the original project. 
+                        </p>
+                    </section>
+                    <section>
+                        <h3>Built with</h3>
+                        <p>
+                            Open-source libraries that make this work, all
+                            MIT-licensed unless noted:
+                        </p>
+                        <ul>
+                            <li>
+                                <a href="https://vuejs.org" target="_blank" rel="noopener noreferrer">Vue 3</a>
+                                — UI framework
+                            </li>
+                            <li>
+                                <a href="https://vitejs.dev" target="_blank" rel="noopener noreferrer">Vite</a>
+                                — build system; with
+                                <a href="https://sass-lang.com" target="_blank" rel="noopener noreferrer">Sass</a>
+                                for styling
+                            </li>
+                            <li>
+                                <a href="https://ajv.js.org" target="_blank" rel="noopener noreferrer">AJV</a>
+                                — JSON Schema validator
+                            </li>
+                            <li>
+                                <a href="https://codemirror.net" target="_blank" rel="noopener noreferrer">CodeMirror 6</a>
+                                via
+                                <a href="https://github.com/surmon-china/vue-codemirror"
+                                    target="_blank"
+                                    rel="noopener noreferrer">vue-codemirror</a>,
+                                <code>@codemirror/lang-json</code>, and
+                                <a href="https://github.com/sanity-io/codemirror-json-schema"
+                                    target="_blank"
+                                    rel="noopener noreferrer">codemirror-json-schema</a>
+                                — JSON editor with schema autocomplete
+                            </li>
+                            <li>
+                                <a href="https://github.com/antoniandre/splitpanes"
+                                    target="_blank"
+                                    rel="noopener noreferrer">splitpanes</a>
+                                — resizable pane layout
+                            </li>
+                        </ul>
+                    </section>
+                    <section>
+                        <h3>Icons &amp; fonts</h3>
+                        <ul>
+                            <li>
+                                <a href="https://fonts.google.com/icons"
+                                    target="_blank"
+                                    rel="noopener noreferrer">Material Icons</a>
+                                by Google — Apache 2.0. Loaded directly
+                                from
+                                <code>fonts.googleapis.com</code>.
+                            </li>
+                            <li>
+                                <a href="https://fonts.google.com/specimen/Lato"
+                                    target="_blank"
+                                    rel="noopener noreferrer">Lato</a>
+                                by Łukasz Dziedzic — SIL Open Font License.
+                            </li>
+                            <li>
+                                Zoom Rooms built-in icon glyphs (the
+                                <code>icon_*</code> set) are Zoom's; we
+                                ship a local copy of the PNG assets so the
+                                preview renders without an internet
+                                connection. We have no affiliation with
+                                Zoom Communications, Inc.
+                            </li>
+                        </ul>
+                    </section>
+                    <section>
+                        <h3>License</h3>
+                        <p>
+                            MIT —
+                            <a :href="licenseUrl" target="_blank" rel="noopener noreferrer">read the full text</a>.
+                            Copyright © 2022 Jeff McAleer and © 2026
+                            Spectrum Integrators. The software is provided
+                            "as is", without warranty of any kind.
+                        </p>
+                    </section>
+                </div>
             </div>
         </div>
     </section>
@@ -986,6 +1141,7 @@
 <script>
 import { SCHEMA_URL, EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
 import { BUILTIN_EVENTS_BY_CATEGORY, BUILTIN_EVENT_BY_ID } from '@/data/builtinEvents';
+import { iconFocusTracker } from '@/data/iconPalette';
 
 // Small inline component for the "+ Comment / $comment" row. Owns no state of
 // its own — emits to the parent which mutates the owner directly.
@@ -1345,9 +1501,19 @@ export default {
             ruleEventDrafts: {},
             // Make the imported events visible to the template.
             BUILTIN_EVENTS_BY_CATEGORY,
+            // Shared tracker the icon-palette drawer (in HomeView) reads
+            // when the user clicks a palette icon — if our last-focused
+            // `.icon-input` is still around, the click fills it; otherwise
+            // the palette falls back to clipboard.
+            iconFocusTracker,
             // Editing-tips modal visibility. Help button in the builder
             // header toggles it; Escape and backdrop click close it.
             helpVisible: false,
+            // URL to the LICENSE.txt served alongside the build. Used by
+            // the About tab. BASE_URL keeps it valid when the app is
+            // hosted under a subpath (e.g. GitHub Pages without a custom
+            // domain).
+            licenseUrl: import.meta.env.BASE_URL + 'LICENSE.txt',
             // Active tab inside the help popup. Resets to 'tips' on each
             // open so a returning user lands on the default tab unless
             // they explicitly navigated to the quirks list.
@@ -2383,6 +2549,44 @@ export default {
 
     strong {
         color: c.$primary;
+    }
+
+    // The global `* { padding: 0; margin: 0 }` reset (style.scss) zeroes
+    // out the default ul padding, which would otherwise render bullets
+    // outside the list's content edge and crammed against the body's
+    // left padding. Restore enough left padding for the bullets to sit
+    // at the paragraph's text-start position and the item text to indent
+    // past them.
+    ul {
+        padding-left: 1.25rem;
+        margin: 0 0 0.6rem;
+
+        &:last-child { margin-bottom: 0; }
+    }
+    li {
+        margin: 0.15rem 0;
+    }
+
+    // Disclaimer block in the About tab. Sets it apart from the
+    // surrounding credits sections so the "as is, no warranty" framing
+    // doesn't blend into the rest of the prose.
+    .help-disclaimer {
+        background: #fef3c7;
+        border-left: 3px solid #f59e0b;
+        border-radius: 3px;
+        padding: 0.6rem 0.85rem;
+
+        h3 {
+            color: #78350f;
+        }
+
+        p {
+            color: #78350f;
+        }
+
+        strong {
+            color: #78350f;
+        }
     }
 
     // "Undocumented but Confirmed Behavior" tab — intro paragraph + a

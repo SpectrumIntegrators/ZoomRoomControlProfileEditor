@@ -89,6 +89,15 @@
                                         @click="toggleInjection">
                                         <span class="material-icons">input</span>
                                     </button>
+                                    <button
+                                        class="btn-theme-toggle"
+                                        :class="{ active: paletteVisible }"
+                                        :title="paletteVisible
+                                            ? 'Hide icon palette'
+                                            : 'Show icon palette — click an icon to fill the focused field or copy it'"
+                                        @click="togglePalette">
+                                        <span class="material-icons">apps</span>
+                                    </button>
                                 </div>
                             </div>
                             <div
@@ -437,6 +446,119 @@
                                 </div>
                             </div>
                         </aside>
+                        <aside
+                            v-if="paletteVisible"
+                            class="palette-drawer">
+                            <div class="palette-drawer-header">
+                                <span class="palette-title">Icon Palette</span>
+                                <transition name="palette-flash">
+                                    <span
+                                        v-if="paletteFlash"
+                                        class="palette-flash"
+                                        :key="paletteFlash">
+                                        {{ paletteFlash }}
+                                    </span>
+                                </transition>
+                                <button
+                                    class="log-close"
+                                    title="Hide icon palette"
+                                    @click="paletteVisible = false">
+                                    <span class="material-icons">close</span>
+                                </button>
+                            </div>
+                            <div class="palette-drawer-body">
+                                <p class="palette-hint">
+                                    Click an icon to fill the icon field you were last
+                                    editing. If no icon field is currently in scope, the
+                                    value is copied to the clipboard instead.
+                                    <a
+                                        href="https://fonts.google.com/icons?icon.set=Material+Icons"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        class="palette-gallery-link">
+                                        Browse Google's full Material Icons gallery →
+                                    </a>
+                                </p>
+                                <input
+                                    type="text"
+                                    class="palette-search"
+                                    v-model="paletteSearch"
+                                    placeholder="Filter by name…" />
+                                <div class="palette-style-row">
+                                    <span class="palette-row-label">MDI style</span>
+                                    <select v-model="paletteMdiStyle">
+                                        <option
+                                            v-for="s in MDI_STYLES"
+                                            :key="s"
+                                            :value="s">{{ s }}</option>
+                                    </select>
+                                </div>
+                                <section
+                                    v-if="filteredZoomIcons.length > 0"
+                                    class="palette-section">
+                                    <h4>Zoom Built-ins</h4>
+                                    <div class="palette-grid">
+                                        <button
+                                            v-for="name in filteredZoomIcons"
+                                            :key="'zr-' + name"
+                                            class="palette-tile"
+                                            :title="getPaletteIconUrl(name) ? name : `${name} (no preview asset)`"
+                                            @click="pickIcon(name)">
+                                            <img
+                                                v-if="getPaletteIconUrl(name)"
+                                                :src="getPaletteIconUrl(name)"
+                                                :alt="name" />
+                                            <span
+                                                v-else
+                                                class="palette-tile-missing"
+                                                aria-hidden="true">?</span>
+                                            <span class="palette-tile-name">{{ name.replace(/^icon_/, '') }}</span>
+                                        </button>
+                                    </div>
+                                </section>
+                                <section
+                                    v-for="cat in filteredMdiCategories"
+                                    :key="'mdi-' + cat.label"
+                                    class="palette-section">
+                                    <h4>{{ cat.label }}</h4>
+                                    <div class="palette-grid">
+                                        <button
+                                            v-for="name in cat.icons"
+                                            :key="'mdi-' + cat.label + '-' + name"
+                                            class="palette-tile"
+                                            :title="mdiValue(name)"
+                                            @click="pickIcon(mdiValue(name))">
+                                            <span :class="getMaterialIconClass(mdiValue(name))">{{ name }}</span>
+                                            <span class="palette-tile-name">{{ name }}</span>
+                                        </button>
+                                    </div>
+                                </section>
+                                <section
+                                    v-if="searchedMdiIcons.length > 0"
+                                    class="palette-section">
+                                    <h4>
+                                        More from Material Icons
+                                        <span class="palette-section-count">{{ searchedMdiIcons.length }} match{{ searchedMdiIcons.length === 1 ? '' : 'es' }}</span>
+                                    </h4>
+                                    <div class="palette-grid">
+                                        <button
+                                            v-for="name in searchedMdiIcons"
+                                            :key="'mdi-extra-' + name"
+                                            class="palette-tile"
+                                            :title="mdiValue(name)"
+                                            @click="pickIcon(mdiValue(name))">
+                                            <span :class="getMaterialIconClass(mdiValue(name))">{{ name }}</span>
+                                            <span class="palette-tile-name">{{ name }}</span>
+                                        </button>
+                                    </div>
+                                </section>
+                                <p
+                                    v-if="filteredZoomIcons.length === 0 && filteredMdiCategories.length === 0 && searchedMdiIcons.length === 0"
+                                    class="palette-empty">
+                                    No icons match "{{ paletteSearch }}".
+                                </p>
+                            </div>
+                        </aside>
                     </div>
                 </Pane>
                 <Pane
@@ -546,6 +668,15 @@ import exampleJson from '@/assets/example.json';
 import { validateProfile } from '@/validation/validateProfile';
 import { transformProfile, formatCommand } from '@/validation/transformProfile';
 import { dispatchResponse, escapeWireBytes } from '@/validation/responseInjection';
+import {
+    ZOOM_BUILTIN_ICONS,
+    ZOOM_ICON_ASSET_ALIASES,
+    MDI_ICON_CATEGORIES,
+    MDI_STYLES,
+    iconFocusTracker,
+    installIconFocusListener,
+} from '@/data/iconPalette';
+import { ALL_MATERIAL_ICONS } from '@/data/materialIconsAll';
 import { schemaState, loadRemoteSchema } from '@/validation/schemaLoader';
 import BuilderPanel from '@/components/BuilderPanel.vue';
 import { EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
@@ -692,6 +823,19 @@ export default {
         // same right-edge slot. Bytes survive opening/closing.
         injectionVisible: false,
         injectionBytes: '',
+        // Icon-palette drawer. Same right-edge slot, mutually exclusive
+        // with log/injection. Search query + MDI style selector survive
+        // open/close. `MDI_STYLES` is exposed for the <select>.
+        paletteVisible: false,
+        paletteSearch: '',
+        paletteMdiStyle: 'filled',
+        // Transient flash text shown next to the "ICON PALETTE" header
+        // after picking an icon — confirms "copied to clipboard" (or, if
+        // we ever want it, "inserted into <field>"). Auto-clears after a
+        // couple seconds via `paletteFlashTimer`.
+        paletteFlash: '',
+        paletteFlashTimer: null,
+        MDI_STYLES,
         // Non-reactive container for CodeMirror's EditorView. Vue 3 reserves
         // `_`/`$` -prefixed property names, so we hang the view off a regular
         // wrapper object instead of a bare `this._cmView = ...` assignment.
@@ -707,6 +851,12 @@ export default {
     }),
     created() {
         loadRemoteSchema();
+        // Document-level focusin listener that keeps the icon-palette's
+        // "last focused icon input" tracker honest — clears the saved
+        // input when the user moves focus to another editable field so a
+        // subsequent palette click falls back to clipboard instead of
+        // hijacking the stale icon-input.
+        installIconFocusListener();
     },
     watch: {
         // When `zr_event_only=true` is added to the profile (either via the
@@ -765,9 +915,22 @@ export default {
     },
     methods: {
         getIconUrl(iconName) {
+            // Resolve aliases first (e.g. `icon_dry` documented name →
+            // `icon_water` on-disk filename, same image Zoom serves).
+            const resolved = ZOOM_ICON_ASSET_ALIASES[iconName] || iconName;
             const map = this.previewDark ? darkThemeIcons : lightThemeIcons;
             const fb = this.previewDark ? darkFallbackIcon : lightFallbackIcon;
-            return map[iconName] ?? fb;
+            return map[resolved] ?? fb;
+        },
+        // Palette tiles always sit on a white background, so use the
+        // dark-stroke (light-theme) icon assets regardless of what
+        // variant the preview is currently rendering. Returns null when
+        // we genuinely don't have a local PNG so the tile can fall back
+        // to a text-only placeholder; alias-resolved names still map to
+        // their backing asset.
+        getPaletteIconUrl(iconName) {
+            const resolved = ZOOM_ICON_ASSET_ALIASES[iconName] || iconName;
+            return lightThemeIcons[resolved] ?? null;
         },
         getMaterialIconName(iconName) {
             if (!iconName) return '';
@@ -835,15 +998,16 @@ export default {
             this.target = '';
             this.commands = [];
         },
-        // The log drawer and injection drawer share the right-edge overlay
-        // slot in the preview pane. Opening either closes the other so they
-        // don't fight for the same real estate.
+        // The log / injection / palette drawers all share the right-edge
+        // overlay slot in the preview pane. Opening any closes the others
+        // so they don't fight for the same real estate.
         toggleLog() {
             if (this.logVisible) {
                 this.logVisible = false;
             } else {
                 this.logVisible = true;
                 this.injectionVisible = false;
+                this.paletteVisible = false;
             }
         },
         toggleInjection() {
@@ -852,7 +1016,89 @@ export default {
             } else {
                 this.injectionVisible = true;
                 this.logVisible = false;
+                this.paletteVisible = false;
             }
+        },
+        togglePalette() {
+            if (this.paletteVisible) {
+                this.paletteVisible = false;
+            } else {
+                this.paletteVisible = true;
+                this.logVisible = false;
+                this.injectionVisible = false;
+            }
+        },
+        // Helper used by the template — wraps a Material Icon name in our
+        // `mdi:<name>:<style>` value form. Always emits the style suffix
+        // (including for filled) because Zoom Rooms requires it explicitly
+        // and refuses to render `mdi:name` without one. Our local preview
+        // renderer happens to fall back to filled when the style is
+        // missing, but matching Zoom's stricter behavior is more useful.
+        mdiValue(name) {
+            return `mdi:${name}:${this.paletteMdiStyle}`;
+        },
+        // Click handler for every palette tile. If the user was just
+        // editing an icon field, type the value into that input (and fire
+        // the input's existing @input handler so the value commits like a
+        // keystroke would). If the focused field is gone (clicked away,
+        // unmounted, etc.), fall back to clipboard.
+        async pickIcon(value) {
+            const el = iconFocusTracker.take();
+            if (el) {
+                // Vue's @input handler reads from $event.target.value, so
+                // just setting `value` and dispatching the event matches
+                // the in-place edit path the user would normally take.
+                el.value = value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                // Visual confirmation: briefly refocus the field. Doesn't
+                // re-grab from the palette button (since blur/focus on the
+                // button stays where it is); just so the user can see
+                // where the value landed.
+                try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+                this.pushLog({
+                    level: 'info',
+                    message: `Icon palette → filled "${value}" into the focused icon field.`,
+                });
+                return;
+            }
+            // No focused field — copy to clipboard. Use the async API when
+            // available; fall back to a hidden textarea + execCommand.
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(value);
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = value;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                }
+                this.flashPalette('Copied to clipboard');
+                this.pushLog({
+                    level: 'info',
+                    message: `Icon palette → copied "${value}" to the clipboard (no focused icon field).`,
+                });
+            } catch (e) {
+                this.flashPalette("Couldn't copy");
+                this.pushLog({
+                    level: 'error',
+                    message: `Icon palette → couldn't copy "${value}" to clipboard: ${e.message}`,
+                });
+            }
+        },
+        // Pop a short note next to the palette header that fades after a
+        // couple seconds. Replaces any previous flash so rapid-fire clicks
+        // don't queue up overlapping messages.
+        flashPalette(text) {
+            if (this.paletteFlashTimer) clearTimeout(this.paletteFlashTimer);
+            this.paletteFlash = text;
+            this.paletteFlashTimer = setTimeout(() => {
+                this.paletteFlash = '';
+                this.paletteFlashTimer = null;
+            }, 2200);
         },
         // Fires when BuilderPanel reset the profile (New button) or loaded
         // a different one (Open / drag-drop). The output preview and the
@@ -1247,6 +1493,57 @@ export default {
                 });
             }
             return { ports, methods, params, settings, scenes, adapters, adapterFields };
+        },
+        // Filtered Zoom built-in icon names matching the palette's search
+        // box (case-insensitive substring match against the bare name).
+        filteredZoomIcons() {
+            const q = (this.paletteSearch || '').trim().toLowerCase();
+            if (!q) return ZOOM_BUILTIN_ICONS;
+            return ZOOM_BUILTIN_ICONS.filter((n) => n.toLowerCase().includes(q));
+        },
+        // Categories with empty `icons` arrays filtered out, so the search
+        // doesn't leave behind empty headers.
+        filteredMdiCategories() {
+            const q = (this.paletteSearch || '').trim().toLowerCase();
+            if (!q) return MDI_ICON_CATEGORIES;
+            return MDI_ICON_CATEGORIES
+                .map((cat) => ({
+                    label: cat.label,
+                    icons: cat.icons.filter((n) => n.toLowerCase().includes(q)),
+                }))
+                .filter((cat) => cat.icons.length > 0);
+        },
+        // Names already exposed via the curated categories (top section).
+        // Used to avoid double-listing in the full-library search results.
+        curatedMdiSet() {
+            const out = new Set();
+            for (const cat of MDI_ICON_CATEGORIES) {
+                for (const n of cat.icons) out.add(n);
+            }
+            return out;
+        },
+        // Free-text search across the full Material Icons name list
+        // (~2200 names). Only activates when the user has typed at least
+        // 2 characters — single-letter queries match too many things.
+        // Results are sorted prefix-first, then by length so the most
+        // relevant matches surface first. Capped at 100 entries to keep
+        // rendering snappy. Names already in the curated categories are
+        // hidden here to avoid duplicate tiles.
+        searchedMdiIcons() {
+            const q = (this.paletteSearch || '').trim().toLowerCase();
+            if (q.length < 2) return [];
+            const curated = this.curatedMdiSet;
+            const prefix = [];
+            const substring = [];
+            for (const name of ALL_MATERIAL_ICONS) {
+                if (curated.has(name)) continue;
+                const lower = name.toLowerCase();
+                if (lower.startsWith(q)) prefix.push(name);
+                else if (lower.includes(q)) substring.push(name);
+            }
+            prefix.sort((a, b) => a.length - b.length || a.localeCompare(b));
+            substring.sort((a, b) => a.length - b.length || a.localeCompare(b));
+            return [...prefix, ...substring].slice(0, 100);
         },
         logButtonTitle() {
             if (this.logVisible) return 'Hide activity log';
@@ -2461,6 +2758,236 @@ $zoom-button-height: 58px;
     &:hover:not(:disabled) {
         opacity: 0.9;
     }
+}
+
+// Icon-palette drawer. Same overlay shape as the log / injection drawers,
+// just wider (icons need real estate) and with a scrollable body holding
+// search box + style selector + grouped icon grids.
+.palette-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: clamp(320px, 44%, 520px);
+    background: #fff;
+    border-left: 1px solid c.$border;
+    box-shadow: -4px 0 10px rgba(0, 0, 0, 0.06);
+    display: flex;
+    flex-direction: column;
+    z-index: 5;
+}
+
+.palette-drawer-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid c.$border;
+
+    .palette-title {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: c.$text-dark;
+        opacity: 0.75;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-right: auto;
+    }
+}
+
+.palette-drawer-body {
+    flex: 1 1 auto;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.6rem 0.75rem;
+}
+
+.palette-hint {
+    margin: 0;
+    color: c.$text-dark;
+    opacity: 0.75;
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.palette-gallery-link {
+    display: inline-block;
+    margin-top: 0.35rem;
+    color: c.$accent;
+    text-decoration: underline;
+    font-size: 0.78rem;
+}
+
+// Header-strip flash: "Copied to clipboard" / similar, fades after a
+// couple seconds via Vue's <transition>.
+.palette-drawer-header {
+    .palette-flash {
+        font-size: 0.72rem;
+        font-weight: 500;
+        color: c.$accent;
+        background: rgba(70, 36, 68, 0.08);
+        padding: 2px 8px;
+        border-radius: 10px;
+        white-space: nowrap;
+        margin-right: 0.4rem;
+    }
+}
+
+.palette-flash-enter-active,
+.palette-flash-leave-active {
+    transition: opacity 0.25s ease;
+}
+.palette-flash-enter-from,
+.palette-flash-leave-to {
+    opacity: 0;
+}
+
+.palette-search {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid c.$border;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-family: inherit;
+}
+
+.palette-style-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+
+    .palette-row-label {
+        text-transform: uppercase;
+        font-size: 0.68rem;
+        font-weight: 600;
+        opacity: 0.6;
+        letter-spacing: 0.04em;
+        color: c.$text-dark;
+    }
+
+    select {
+        flex: 0 0 auto;
+        padding: 3px 6px;
+        border: 1px solid c.$border;
+        border-radius: 3px;
+        font-size: 0.82rem;
+        font-family: inherit;
+    }
+}
+
+.palette-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+
+    h4 {
+        margin: 0;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: c.$primary;
+        opacity: 0.8;
+        padding-bottom: 0.2rem;
+        border-bottom: 1px solid c.$border;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.4rem;
+    }
+
+    .palette-section-count {
+        font-weight: 400;
+        text-transform: none;
+        letter-spacing: normal;
+        font-size: 0.68rem;
+        opacity: 0.7;
+    }
+}
+
+.palette-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+    gap: 0.35rem;
+}
+
+.palette-tile {
+    @include b.btn-shared;
+    background: #fff;
+    border: 1px solid c.$border;
+    border-radius: 4px;
+    padding: 0.4rem 0.25rem 0.3rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    color: c.$text-dark;
+    cursor: pointer;
+    text-align: center;
+
+    img {
+        width: 28px;
+        height: 28px;
+        object-fit: contain;
+    }
+
+    .material-icons,
+    .material-icons-outlined,
+    .material-icons-round,
+    .material-icons-sharp,
+    .material-icons-two-tone {
+        font-size: 28px;
+        line-height: 1;
+    }
+
+    // Square dashed placeholder for Zoom-documented icons whose preview
+    // PNG isn't in our assets folder. Same footprint as the rendered
+    // icons so the grid layout stays consistent.
+    .palette-tile-missing {
+        width: 28px;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px dashed c.$border;
+        border-radius: 4px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        opacity: 0.5;
+    }
+
+    .palette-tile-name {
+        font-size: 0.62rem;
+        opacity: 0.7;
+        word-break: break-all;
+        line-height: 1.15;
+        max-height: 2.3em;
+        overflow: hidden;
+    }
+
+    &:hover {
+        background: c.$zoom-button;
+        border-color: c.$accent;
+        color: c.$accent;
+    }
+
+    &:active {
+        background: color.adjust(c.$zoom-button, $lightness: -5%);
+    }
+}
+
+.palette-empty {
+    color: c.$text-dark;
+    opacity: 0.55;
+    font-style: italic;
+    font-size: 0.82rem;
+    margin: 0;
+    padding: 0.5rem;
+    text-align: center;
 }
 
 // Footer sits below the scroller, holding the Clear button out of the way
