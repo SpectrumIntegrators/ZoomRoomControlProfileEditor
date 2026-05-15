@@ -1,0 +1,63 @@
+{
+    "$schema": "https://cdn.jsdelivr.net/gh/SpectrumIntegrators/PublicSchemas@main/ZoomRoomsControlProfile/v1/zrcs-profile.schema.json",
+    "info": {
+        "customer": "",
+        "location": "",
+        "job": "",
+        "displayType": "",
+        "automation": "",
+        "createdBy": "",
+        "createdDate": ""
+    },
+    "adapters": [
+        {
+            "model": "USB2Serial",
+            "com": "COM8",
+            "ports": [
+                {
+                    "id": "display",
+                    "name": "Display",
+                    "settings": {
+                        "baud_rate": 9600,
+                        "data_bits": 8,
+                        "parity": 0,
+                        "stop_bits": 1,
+                        "flow_control": 0
+                    },
+                    "methods": [
+                        {
+                            "id": "power",
+                            "name": "Power",
+                            "command": "POWR%   \\x0D",
+                            "params": [
+                                {
+                                    "id": "on",
+                                    "name": "On",
+                                    "value": "1"
+                                },
+                                {
+                                    "id": "off",
+                                    "name": "Off",
+                                    "value": "0"
+                                }
+                            ],
+                            "type": "actions"
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "rules": {
+        "meeting_started": [
+            "display.power.on"
+        ],
+        "meeting_ended": [
+            "display.power.off"
+        ]
+    },
+    "styles": [
+        "display.main_method=power",
+        "display.icon=icon_tv"
+    ]
+}

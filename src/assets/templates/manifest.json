@@ -1,0 +1,27 @@
+[
+    {
+        "file": "New Empty Control Profile.json",
+        "title": "Blank profile",
+        "description": "Bare-minimum starting point. One GenericNetworkAdapter, one empty port, one empty method. Replace the placeholders with your device's address and commands."
+    },
+    {
+        "file": "Demo Control Profile.json",
+        "title": "Demo",
+        "description": "A multi-device profile showing every supported adapter type (GenericNetworkAdapter, iTach IP2CC, USB2Serial) plus scenes, rules, and response filters. Useful for exploring the editor and the preview."
+    },
+    {
+        "file": "Sharp TCP Display Zoom Room Control Profile.json",
+        "title": "Sharp display (TCP)",
+        "description": "Network-controllable Sharp display over TCP with login/password handshake response filters."
+    },
+    {
+        "file": "Sharp RS-232 USB-Serial Zoom Room Control Profile.json",
+        "title": "Sharp display (USB-to-serial RS-232)",
+        "description": "Sharp display driven over RS-232 by a USB-to-serial adapter attached to the Zoom Room PC."
+    },
+    {
+        "file": "Sony RS-232 Zoom Room Control Profile.json",
+        "title": "Sony display (TCP to RS-232 interface)",
+        "description": "Sony display controlled via RS-232, addressed over TCP (e.g. through a StarTech I13P serial-over-TCP adapter)."
+    }
+]

@@ -189,21 +189,44 @@
                     ]
                 }
             ]
+        },
+        {
+            "model": "USB2Serial",
+            "ports": [
+                {
+                    "id": "videoswitcher",
+                    "name": "Switcher",
+                    "settings": {
+                        "baud_rate": 9600,
+                        "data_bits": 8,
+                        "parity": 0,
+                        "stop_bits": 1,
+                        "flow_control": 0
+                    },
+                    "methods": [
+                        {
+                            "id": "hdmiout1",
+                            "name": "Source",
+                            "command": "#%:1\\x0D",
+                            "type": "actions",
+                            "params": [
+                                {
+                                    "id": "hdmiin1",
+                                    "name": "Laptop",
+                                    "value": "1"
+                                },
+                                {
+                                    "id": "hdmiin2",
+                                    "name": "PC",
+                                    "value": "2"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "com": "COM7"
         }
-    ],
-    "styles": [
-        "sl_dten_tv.main_method=power",
-        "sl_dten_tv.icon=icon_air_conditioner",
-        "sl_dten_tv.power.icon=icon_power",
-        "sl_dten_tv.volume.up.icon=icon_up",
-        "sl_dten_tv.volume.down.icon=icon_down",
-        "sl_dten_tv.warp.invisible=true",
-        "cc_light.icon=icon_light",
-        "cc_projector.icon=icon_projector",
-        "generic_curtain.main_method=power",
-        "generic_curtain.icon=icon_curtain",
-        "voice_lift.main_method=voice_lift",
-        "voice_lift.icon=mdi:mic:filled"
     ],
     "scenes": [
         {
@@ -228,6 +251,22 @@
             ]
         }
     ],
+    "styles": [
+        "sl_dten_tv.main_method=power",
+        "sl_dten_tv.volume.up.icon=icon_up",
+        "sl_dten_tv.volume.down.icon=icon_down",
+        "sl_dten_tv.warp.invisible=true",
+        "cc_light.icon=icon_light",
+        "cc_projector.icon=icon_projector",
+        "generic_curtain.main_method=power",
+        "generic_curtain.icon=icon_curtain",
+        "voice_lift.main_method=voice_lift",
+        "voice_lift.icon=mdi:mic:filled",
+        "videoswitcher.icon=mdi:alt_route:filled",
+        "videoswitcher.hdmiout1.icon=mdi:smart_display:filled",
+        "sl_dten_tv.power.icon=icon_power",
+        "sl_dten_tv.icon=icon_tv"
+    ],
     "rules": {
         "meeting_started": [
             "cc_light.power.on",
@@ -251,5 +290,12 @@
         "zr_video_stopped": [
             "generic_curtain.power.off"
         ]
-    }
+    },
+    "response_filters": [
+        {
+            "name": "lights_on_when_projector_off",
+            "filter_regex": "[\\s\\S]*PWR=00[\\s\\S]*",
+            "trigger_event": "cc_light.power.on"
+        }
+    ]
 }

@@ -668,7 +668,7 @@
 </template>
 
 <script>
-import exampleJson from '@/assets/example.json';
+import { getTemplateByFile, DEMO_TEMPLATE_FILE } from '@/data/templates';
 import { validateProfile } from '@/validation/validateProfile';
 import { transformProfile, formatCommand, resolveCommandRefs } from '@/validation/transformProfile';
 import { dispatchResponse, escapeWireBytes } from '@/validation/responseInjection';
@@ -803,7 +803,11 @@ export default {
     name: 'HomeView',
     components: { BuilderPanel, Splitpanes, Pane, Codemirror },
     data: () => ({
-        json: JSON.stringify(exampleJson, null, 4),
+        // First-paint content is the Demo template. Loaded as raw text so
+        // the file is rendered with the formatting it has on disk. If the
+        // template file disappeared somehow, fall back to an empty object
+        // so the editor still loads instead of erroring out.
+        json: (getTemplateByFile(DEMO_TEMPLATE_FILE) || { text: '{}' }).text,
         target: '',
         commands: [],
         scenesExpanded: false,

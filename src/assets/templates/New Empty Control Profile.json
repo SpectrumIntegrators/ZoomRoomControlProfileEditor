@@ -1,0 +1,33 @@
+{
+    "$schema": "https://cdn.jsdelivr.net/gh/SpectrumIntegrators/PublicSchemas@main/ZoomRoomsControlProfile/v1/zrcs-profile.schema.json",
+    "info": {
+        "customer": "",
+        "location": "",
+        "job": "",
+        "displayType": "",
+        "automation": "",
+        "createdBy": "",
+        "createdDate": "2026-05-15",
+        "tool": "https://github.com/SpectrumIntegrators/ZoomRoomControlProfileEditor"
+    },
+    "adapters": [
+        {
+            "model": "GenericNetworkAdapter",
+            "ip": "",
+            "ports": [
+                {
+                    "id": "",
+                    "name": "",
+                    "methods": [
+                        {
+                            "id": "",
+                            "name": "",
+                            "command": "",
+                            "type": "action"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

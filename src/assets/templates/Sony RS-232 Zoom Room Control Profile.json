@@ -1,0 +1,55 @@
+{
+    "$schema": "https://cdn.jsdelivr.net/gh/SpectrumIntegrators/PublicSchemas@main/ZoomRoomsControlProfile/v1/zrcs-profile.schema.json",
+    "info": {
+        "customer": "",
+        "location": "",
+        "job": "",
+        "displayType": "",
+        "automation": "",
+        "createdBy": "",
+        "createdDate": ""
+    },
+    "adapters": [
+        {
+            "model": "GenericNetworkAdapter",
+            "ip": "tcp://192.168.1.70:4999",
+            "ports": [{
+                "id": "display",
+                "name": "Display",
+                "methods":[
+                    {
+                        "id": "power",
+                        "name": "Power",
+                        "command": "\\x8C\\x00\\x00\\x02%",
+                        "params": [
+                            {
+                                "id":"on",
+                                "name":"On",
+                                "value":"\\x01\\x8F"
+                            },
+                            {
+                                "id":"off",
+                                "name":"Off",
+                                "value":"\\x00\\x8E"
+                            }
+                        ],
+                        "type": "actions"
+                    }
+                ]
+            }]
+        }
+    ],
+
+    "rules": {
+        "meeting_started": [
+            "display.power.on"
+        ],
+        "meeting_ended": [
+            "display.power.off"
+        ]
+    },
+    "styles": [
+        "display.main_method=power",
+        "display.icon=icon_tv"
+    ]
+}

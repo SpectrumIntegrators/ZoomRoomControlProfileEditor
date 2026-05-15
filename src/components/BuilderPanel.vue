@@ -4,9 +4,15 @@
             <div class="builder-actions">
                 <button
                     class="btn-icon"
-                    title="New profile"
+                    title="New profile (blank starting point)"
                     @click="newProfile">
                     <span class="material-icons">data_object</span>
+                </button>
+                <button
+                    class="btn-icon"
+                    title="Start from a template"
+                    @click="templatesVisible = true">
+                    <span class="material-icons">library_books</span>
                 </button>
                 <button
                     class="btn-icon"
@@ -1149,13 +1155,50 @@
                 </div>
             </div>
         </div>
+
+        <!-- Template picker modal. Opened by the library_books button in
+             the header; lists every template defined in
+             `src/assets/templates/manifest.json` in manifest order.
+             Click a template to load it (replaces the current profile —
+             a confirm dialog fires first since this is destructive). -->
+        <div
+            v-if="templatesVisible"
+            class="help-backdrop"
+            @click.self="templatesVisible = false"
+            @keydown.esc="templatesVisible = false"
+            tabindex="-1"
+            ref="templatesBackdrop">
+            <div class="help-card template-card" role="dialog" aria-label="Choose a starting template">
+                <header class="help-card-header">
+                    <div class="template-header-title">Choose a starting template</div>
+                    <button
+                        class="help-close"
+                        title="Close"
+                        @click="templatesVisible = false">
+                        <span class="material-icons">close</span>
+                    </button>
+                </header>
+                <div class="help-card-body template-list">
+                    <button
+                        v-for="t in templates"
+                        :key="t.filename"
+                        type="button"
+                        class="template-row"
+                        @click="pickTemplate(t.filename)">
+                        <span class="template-title">{{ t.title }}</span>
+                        <span class="template-description">{{ t.description }}</span>
+                    </button>
+                </div>
+            </div>
+        </div>
     </section>
 </template>
 
 <script>
-import { SCHEMA_URL, EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
+import { EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
 import { BUILTIN_EVENTS_BY_CATEGORY, BUILTIN_EVENT_BY_ID } from '@/data/builtinEvents';
 import { iconFocusTracker } from '@/data/iconPalette';
+import { TEMPLATES, getTemplateByFile, BLANK_TEMPLATE_FILE } from '@/data/templates';
 
 // Small inline component for the "+ Comment / $comment" row. Owns no state of
 // its own — emits to the parent which mutates the owner directly.
@@ -1537,6 +1580,14 @@ export default {
             // Editing-tips modal visibility. Help button in the builder
             // header toggles it; Escape and backdrop click close it.
             helpVisible: false,
+            // Template-picker modal visibility. Library button in the
+            // builder header opens it; Escape and backdrop click close.
+            templatesVisible: false,
+            // Ordered list of starter templates (filename / title /
+            // description / raw JSON text). Sourced from the manifest
+            // beside the template files so order and metadata stay in
+            // one place; we just hand the array to the template.
+            templates: TEMPLATES,
             // URL to the LICENSE.txt served alongside the build. Used by
             // the About tab. BASE_URL keeps it valid when the app is
             // hosted under a subpath (e.g. GitHub Pages without a custom
@@ -1781,53 +1832,44 @@ export default {
             if (!confirm('Clear the profile and start over? This will discard all current data.')) {
                 return;
             }
-            // Seed with a single GenericNetworkAdapter and one empty port so
-            // the user has a real starting structure to fill in, instead of
-            // having to click + Adapter + Port + Method themselves before
-            // any preview can render.
-            // Seed `info` with all known fields (empty) plus the editor's
-            // identifying stamps. If the user deletes the info block later,
-            // the download path won't recreate it — so this is a one-time
-            // provision, not an enforced floor.
-            const info = makeBlankInfo();
-            info.createdDate = todayIso();
-            info.tool = EDITOR_URL;
-            this.localProfile = {
-                $schema: SCHEMA_URL,
-                info,
-                adapters: [
-                    {
-                        model: 'GenericNetworkAdapter',
-                        ip: '',
-                        ports: [
-                            {
-                                id: '',
-                                name: '',
-                                // Seed one empty method so the schema's
-                                // `methods.minItems: 1` is satisfied right
-                                // out of the gate — the user only needs to
-                                // fill values, not click "+ Method" first.
-                                methods: [
-                                    {
-                                        id: '',
-                                        name: '',
-                                        command: '',
-                                        type: 'action',
-                                    },
-                                ],
-                            },
-                        ],
-                    },
-                ],
-            };
-            // Rebuild entries from the new info so the builder UI reflects
-            // the seed data immediately rather than waiting for the prop
-            // round-trip to populate it.
-            this.syncEntriesFromInfo(info);
-            // Let HomeView wipe the output preview and activity log too —
-            // they belong to the old profile and would just confuse the
-            // user staring at a fresh document.
+            // "New" is just "load the blank template" — keeps the starting
+            // shape in the templates folder where users can inspect it,
+            // instead of duplicating it as a hardcoded object here.
+            this.loadTemplate(BLANK_TEMPLATE_FILE);
+        },
+        pickTemplate(filename) {
+            // Picker is a deliberate two-click action (open dialog → pick),
+            // so the dialog itself is the confirmation — no extra prompt.
+            this.templatesVisible = false;
+            this.loadTemplate(filename);
+        },
+        loadTemplate(filename) {
+            const t = getTemplateByFile(filename);
+            if (!t) return;
+            let parsed;
+            try {
+                parsed = JSON.parse(t.text);
+            } catch {
+                // A template that doesn't parse is a build-time bug, not
+                // something the user did. Surface it loudly but don't
+                // wedge the editor — bail without replacing anything.
+                console.error(`[templates] "${filename}" is not valid JSON`);
+                return;
+            }
+            // Stamp identifying metadata if the template has an info block.
+            // createdDate represents when *this profile instance* was
+            // started, not when the template file itself was written, so
+            // we overwrite. `tool` is filled only if absent so a template
+            // that documents a different upstream tool keeps its value.
+            if (parsed && parsed.info && typeof parsed.info === 'object') {
+                parsed.info.createdDate = todayIso();
+                if (!parsed.info.tool) parsed.info.tool = EDITOR_URL;
+            }
+            const text = JSON.stringify(parsed, null, 4);
+            // Wipe the output preview and activity log — they belonged to
+            // the old profile and would just confuse a user starting fresh.
             this.$emit('profile-reset');
+            this.$emit('update:json', text);
         },
         openProfile() {
             if (!confirm('Replace the current profile with one from a file? Current edits will be lost.')) {
@@ -2734,6 +2776,85 @@ export default {
             &:last-child { margin-bottom: 0; }
         }
     }
+}
+
+// Template-picker modal. Reuses .help-backdrop / .help-card / .help-card-header
+// / .help-card-body for the chrome (so the chrome is consistent with the help
+// popup). Adds a left-aligned plain-text title in place of the tabs and a
+// clickable-row layout in the body.
+.template-card {
+    width: min(560px, 100%);
+    // .help-card caps at 90vh, which on a tall monitor lets the picker
+    // grow well past "obviously a dialog" before the body starts to
+    // scroll. Template rows are tall (multi-line descriptions) so we
+    // hit "feels too big" much sooner than the help popup does — cap
+    // tighter and let `.help-card-body`'s `overflow: auto` take over
+    // when more templates are added than fit comfortably.
+    max-height: min(70vh, 560px);
+}
+
+.template-header-title {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    padding: 0.55rem 0.4rem;
+    font-size: 1.0rem;
+    font-weight: 600;
+    color: c.$text-light;
+}
+
+.template-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.85rem;
+}
+
+.template-row {
+    @include b.btn-shared;
+    // btn-shared sets `white-space: nowrap`, `overflow: hidden`, and
+    // `text-overflow: ellipsis` for single-line buttons. Template rows are
+    // multi-line cards with wrapping descriptions, so override all three.
+    // Also drop the mixin's 36px line-height — that's tuned for a compact
+    // chip; here we want normal text leading inside the description.
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.4;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+    text-align: left;
+    background: c.$background;
+    border: 1px solid c.$border;
+    border-radius: 6px;
+    padding: 0.65rem 0.85rem;
+    color: c.$text-dark;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+
+    &:hover {
+        border-color: c.$accent;
+        background: #fff;
+    }
+    &:focus-visible {
+        outline: 2px solid c.$accent;
+        outline-offset: 2px;
+    }
+}
+
+.template-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: c.$primary;
+}
+
+.template-description {
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: c.$text-dark;
+    opacity: 0.85;
 }
 
 .cb-event-only {

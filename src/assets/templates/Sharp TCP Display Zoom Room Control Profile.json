@@ -1,0 +1,88 @@
+{
+    "$schema": "https://cdn.jsdelivr.net/gh/SpectrumIntegrators/PublicSchemas@main/ZoomRoomsControlProfile/v1/zrcs-profile.schema.json",
+    "info": {
+        "customer": "",
+        "location": "",
+        "job": "",
+        "displayType": "",
+        "automation": "",
+        "createdBy": "",
+        "createdDate": ""
+    },
+    "adapters": [
+        {
+            "model": "GenericNetworkAdapter",
+            "ip": "tcp://192.168.51.119:10008",
+            "ports": [{
+                "id": "display",
+                "name": "Display",
+                "methods":[
+                    {
+                        "id": "power",
+                        "name": "Power",
+                        "command": "POWR   %\r",
+                        "params": [
+                            {
+                                "id":"on",
+                                "name":"On",
+                                "value":"1"
+                            },
+                            {
+                                "id":"off",
+                                "name":"Off",
+                                "value":"0"
+                            }
+                        ],
+                        "type": "actions"
+                    },
+                    {
+                        "id": "auth",
+                        "name": "Authorization",
+                        "command": "%\r",
+                        "params": [
+                            {
+                                "id": "send_username",
+                                "name": "Send Username",
+                                "value": "username"
+                            },
+                            {
+                                "id": "send_password",
+                                "name": "Send Password",
+                                "value": "pass"
+                            }
+                        ],
+                        "type": "actions"
+                    }
+                ],
+                "response_filter": [
+                    "login_prompt",
+                    "password_prompt"
+                ]
+            }]
+        }
+    ],
+
+    "rules": {
+        "send_login": [
+            "display.auth.send_username"
+        ],
+        "send_password": [
+            "display.auth.send_password"
+        ]
+    },
+    "styles": [
+        "display.auth.invisible=true"
+    ],
+    "response_filters": [
+        {
+            "name": "login_prompt",
+            "filter_regex": "(.|\r|\n)*Login:(.|\r|\n)*",
+            "trigger_event": "send_login"
+        },
+        {
+            "name": "password_prompt",
+            "filter_regex": "(.|\r|\n)*Password:(.|\r|\n)*",
+            "trigger_event": "send_password"
+        }
+    ]
+}
