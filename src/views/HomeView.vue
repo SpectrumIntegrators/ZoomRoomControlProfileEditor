@@ -52,6 +52,12 @@
                                     <span>Show hidden controls (testing only)</span>
                                 </label>
                                 <div class="toolbar-right">
+                                    <span
+                                        v-if="schemaSourceStatus === 'local-fallback'"
+                                        class="schema-source-chip schema-local-fallback"
+                                        :title="schemaSourceTitle">
+                                        schema: local
+                                    </span>
                                     <button
                                         v-if="validationWarnings.length > 0"
                                         class="btn-warnings-toggle"
@@ -689,7 +695,7 @@ import {
     installIconFocusListener,
 } from '@/data/iconPalette';
 import { ALL_MATERIAL_ICONS } from '@/data/materialIconsAll';
-import { schemaState, loadRemoteSchema } from '@/validation/schemaLoader';
+import { schemaState, loadRemoteSchema, CANONICAL_SCHEMA_URL } from '@/validation/schemaLoader';
 import BuilderPanel from '@/components/BuilderPanel.vue';
 import { EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
 import { Splitpanes, Pane } from 'splitpanes';
@@ -883,6 +889,24 @@ export default {
     }),
     created() {
         loadRemoteSchema();
+        // Only the failure path needs to surface — successful remote loads
+        // are the expected case and would just be log noise. The fallback
+        // chip in the toolbar mirrors this warning visually.
+        this.$watch(
+            () => schemaState.status,
+            (status) => {
+                if (status === 'local-fallback') {
+                    this.pushLog({
+                        level: 'warn',
+                        message: 'Schema: remote fetch failed — using bundled fallback.',
+                        details: schemaState.error ? [schemaState.error] : [],
+                    });
+                }
+            }
+        );
+        // Check the starting profile's $schema URL once we know which schema
+        // the editor settled on. Subsequent edits re-check via the json watcher.
+        this.checkSchemaUrlMismatch();
         // Document-level focusin listener that keeps the icon-palette's
         // "last focused icon input" tracker honest — clears the saved
         // input when the user moves focus to another editable field so a
@@ -914,11 +938,14 @@ export default {
             // every edit is the simplest rule that always matches user intent.
             this.setShining([]);
             // Coalesce a burst of keystrokes into one log entry so the user can
-            // scan the log without it being a wall of "JSON modified".
+            // scan the log without it being a wall of "JSON modified". The
+            // $schema mismatch check runs in the same debounced callback so it
+            // also waits for the user to stop typing before warning.
             if (this._jsonLogTimer) clearTimeout(this._jsonLogTimer);
             this._jsonLogTimer = setTimeout(() => {
                 this._jsonLogTimer = null;
                 this.pushLog({ level: 'info', message: 'JSON modified' });
+                this.checkSchemaUrlMismatch();
             }, JSON_LOG_DEBOUNCE_MS);
         },
         validationWarnings(newWarnings, oldWarnings) {
@@ -1008,6 +1035,32 @@ export default {
             }
             if (buffer) segments.push({ ws: false, text: buffer });
             return segments;
+        },
+        // Warn if the loaded profile declares a `$schema` URL that isn't the
+        // canonical one this editor validates against. Tracks the last URL it
+        // warned about so the same mismatch doesn't spam the log on every
+        // edit — the user only sees a new entry when the URL actually
+        // changes to a different non-matching value (or back to matching).
+        checkSchemaUrlMismatch() {
+            const declared = this.rawProfile && this.rawProfile.$schema;
+            if (!declared || typeof declared !== 'string') {
+                this._lastWarnedSchemaUrl = null;
+                return;
+            }
+            if (declared === CANONICAL_SCHEMA_URL) {
+                this._lastWarnedSchemaUrl = null;
+                return;
+            }
+            if (this._lastWarnedSchemaUrl === declared) return;
+            this._lastWarnedSchemaUrl = declared;
+            this.pushLog({
+                level: 'warn',
+                message: 'Profile $schema differs from the editor\'s schema — validation uses the editor\'s copy, not the one declared.',
+                details: [
+                    `declared: ${declared}`,
+                    `editor:   ${CANONICAL_SCHEMA_URL}`,
+                ],
+            });
         },
         pushLog(entry) {
             const time = new Date().toTimeString().slice(0, 8); // HH:MM:SS
@@ -1791,6 +1844,14 @@ export default {
                 return null;
             }
         },
+        schemaSourceStatus() {
+            return schemaState.status;
+        },
+        schemaSourceTitle() {
+            // Only the local-fallback chip is rendered, so this only needs
+            // to describe that case.
+            return `Remote schema fetch failed (${schemaState.error || 'unknown error'}). Using the bundled fallback schema.`;
+        },
         hasHiddenContent() {
             const ctrl = this.calculatedControls;
             if (!ctrl) return false;
@@ -2198,6 +2259,29 @@ $zoom-button-height: 58px;
         flex-direction: row;
         align-items: center;
         gap: 0.4rem;
+    }
+
+    // Subtle persistent chip showing which schema copy the editor is using.
+    // Sits to the left of the warnings/theme/log buttons in the toolbar.
+    // Neutral styling so it reads as environment status, not a problem to fix.
+    .schema-source-chip {
+        font-size: 0.72rem;
+        line-height: 1.4;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        color: rgba(0, 0, 0, 0.55);
+        background: transparent;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+        user-select: none;
+        white-space: nowrap;
+
+        &.schema-local-fallback {
+            // Slightly warm tint to flag that we're not on the live copy,
+            // without screaming "error" — the warning lives in the log.
+            border-color: rgba(217, 119, 6, 0.45);
+            color: #92400e;
+        }
     }
 
     .btn-warnings-toggle {
