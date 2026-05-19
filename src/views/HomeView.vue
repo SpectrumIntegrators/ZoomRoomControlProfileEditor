@@ -52,6 +52,12 @@
                                     <span>Show hidden controls (testing only)</span>
                                 </label>
                                 <div class="toolbar-right">
+                                    <span
+                                        v-if="schemaSourceStatus === 'local-fallback'"
+                                        class="schema-source-chip schema-local-fallback"
+                                        :title="schemaSourceTitle">
+                                        schema: local
+                                    </span>
                                     <button
                                         v-if="validationWarnings.length > 0"
                                         class="btn-warnings-toggle"
@@ -229,6 +235,8 @@
                                                                     errorTargets.params.has(
                                                                         ai + ':' + (port.id || ('#' + pi)) + '#' + port.methods.indexOf(port.main_method) + '#' + mi
                                                                     ),
+                                                                shine: isShining('control', controlRef(port, port.main_method, param)),
+                                                                'shine-pulse': isPulsing('control', controlRef(port, port.main_method, param)),
                                                             }"
                                                             @click="zoomClick(adapter, port, port.main_method, param)">
                                                             <p v-if="!param.icon">
@@ -256,6 +264,8 @@
                                                             errorTargets.methods.has(
                                                                 ai + ':' + (port.id || ('#' + pi)) + '#' + port.methods.indexOf(port.main_method)
                                                             ),
+                                                        shine: isShining('control', controlRef(port, port.main_method)),
+                                                        'shine-pulse': isPulsing('control', controlRef(port, port.main_method)),
                                                     }"
                                                     @click="zoomClick(adapter, port, port.main_method)">
                                                     <p v-if="!port.main_method.icon">
@@ -312,6 +322,8 @@
                                                                 'btn-circle': param.icon != null,
                                                                 'preview-error':
                                                                     errorTargets.params.has(ai + ':' + (port.id || ('#' + pi)) + '#' + mi + '#' + ppi),
+                                                                shine: isShining('control', controlRef(port, method, param)),
+                                                                'shine-pulse': isPulsing('control', controlRef(port, method, param)),
                                                             }"
                                                             @click="zoomClick(adapter, port, method, param)">
                                                             <p v-if="!param.icon">
@@ -334,6 +346,8 @@
                                                         :class="{
                                                             'btn-rectangle': method.icon == null,
                                                             'btn-circle': method.icon != null,
+                                                            shine: isShining('control', controlRef(port, method)),
+                                                            'shine-pulse': isPulsing('control', controlRef(port, method)),
                                                         }"
                                                         @click="zoomClick(adapter, port, method)">
                                                         <p v-if="!method.icon">
@@ -681,7 +695,7 @@ import {
     installIconFocusListener,
 } from '@/data/iconPalette';
 import { ALL_MATERIAL_ICONS } from '@/data/materialIconsAll';
-import { schemaState, loadRemoteSchema } from '@/validation/schemaLoader';
+import { schemaState, loadRemoteSchema, CANONICAL_SCHEMA_URL } from '@/validation/schemaLoader';
 import BuilderPanel from '@/components/BuilderPanel.vue';
 import { EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
 import { Splitpanes, Pane } from 'splitpanes';
@@ -810,6 +824,13 @@ export default {
         json: (getTemplateByFile(DEMO_TEMPLATE_FILE) || { text: '{}' }).text,
         target: '',
         commands: [],
+        // Composite keys ("control:<ref>") for the persistent glow that
+        // marks the most-recently-fired control button(s). Replaced wholesale
+        // on each new trigger so the glow always shows current activity.
+        firingTargets: new Set(),
+        // Same key shape, but for the transient one-shot border bolt. Entries
+        // self-clear after the 0.5s sweep so re-triggers can replay.
+        pulsingTargets: new Set(),
         scenesExpanded: false,
         showHidden: false,
         warningsExpanded: false,
@@ -868,6 +889,24 @@ export default {
     }),
     created() {
         loadRemoteSchema();
+        // Only the failure path needs to surface — successful remote loads
+        // are the expected case and would just be log noise. The fallback
+        // chip in the toolbar mirrors this warning visually.
+        this.$watch(
+            () => schemaState.status,
+            (status) => {
+                if (status === 'local-fallback') {
+                    this.pushLog({
+                        level: 'warn',
+                        message: 'Schema: remote fetch failed — using bundled fallback.',
+                        details: schemaState.error ? [schemaState.error] : [],
+                    });
+                }
+            }
+        );
+        // Check the starting profile's $schema URL once we know which schema
+        // the editor settled on. Subsequent edits re-check via the json watcher.
+        this.checkSchemaUrlMismatch();
         // Document-level focusin listener that keeps the icon-palette's
         // "last focused icon input" tracker honest — clears the saved
         // input when the user moves focus to another editable field so a
@@ -893,12 +932,20 @@ export default {
             savePreviewVariant(newVal);
         },
         json() {
+            // Any edit invalidates the "last triggered" feedback: a button's
+            // identity is tied to its ref, but a deleted-and-recreated ref
+            // would silently inherit the previous button's glow. Clearing on
+            // every edit is the simplest rule that always matches user intent.
+            this.setShining([]);
             // Coalesce a burst of keystrokes into one log entry so the user can
-            // scan the log without it being a wall of "JSON modified".
+            // scan the log without it being a wall of "JSON modified". The
+            // $schema mismatch check runs in the same debounced callback so it
+            // also waits for the user to stop typing before warning.
             if (this._jsonLogTimer) clearTimeout(this._jsonLogTimer);
             this._jsonLogTimer = setTimeout(() => {
                 this._jsonLogTimer = null;
                 this.pushLog({ level: 'info', message: 'JSON modified' });
+                this.checkSchemaUrlMismatch();
             }, JSON_LOG_DEBOUNCE_MS);
         },
         validationWarnings(newWarnings, oldWarnings) {
@@ -989,6 +1036,32 @@ export default {
             if (buffer) segments.push({ ws: false, text: buffer });
             return segments;
         },
+        // Warn if the loaded profile declares a `$schema` URL that isn't the
+        // canonical one this editor validates against. Tracks the last URL it
+        // warned about so the same mismatch doesn't spam the log on every
+        // edit — the user only sees a new entry when the URL actually
+        // changes to a different non-matching value (or back to matching).
+        checkSchemaUrlMismatch() {
+            const declared = this.rawProfile && this.rawProfile.$schema;
+            if (!declared || typeof declared !== 'string') {
+                this._lastWarnedSchemaUrl = null;
+                return;
+            }
+            if (declared === CANONICAL_SCHEMA_URL) {
+                this._lastWarnedSchemaUrl = null;
+                return;
+            }
+            if (this._lastWarnedSchemaUrl === declared) return;
+            this._lastWarnedSchemaUrl = declared;
+            this.pushLog({
+                level: 'warn',
+                message: 'Profile $schema differs from the editor\'s schema — validation uses the editor\'s copy, not the one declared.',
+                details: [
+                    `declared: ${declared}`,
+                    `editor:   ${CANONICAL_SCHEMA_URL}`,
+                ],
+            });
+        },
         pushLog(entry) {
             const time = new Date().toTimeString().slice(0, 8); // HH:MM:SS
             this.logEntries.unshift({
@@ -1014,6 +1087,7 @@ export default {
         clearOutput() {
             this.target = '';
             this.commands = [];
+            this.setShining([]);
         },
         // The log / injection / palette drawers all share the right-edge
         // overlay slot in the preview pane. Opening any closes the others
@@ -1331,28 +1405,85 @@ export default {
                 }
             }
         },
-        zoomClick(adapter, port, method, param) {
+        controlRef(port, method, param) {
             // Substitute empty id segments with an obvious placeholder so a
             // missing-id error doesn't read as "port..param" (which is easy
             // to skim past as if it were just a leading-dot rendering glitch).
             const seg = (x) => (x ? x : '<MISSING_ID>');
-            const ref = param
+            return param
                 ? `${seg(port.id)}.${seg(method.id)}.${seg(param.id)}`
                 : `${seg(port.id)}.${seg(method.id)}`;
+        },
+        isShining(kind, id) {
+            return this.firingTargets.has(`${kind}:${id}`);
+        },
+        isPulsing(kind, id) {
+            return this.pulsingTargets.has(`${kind}:${id}`);
+        },
+        // Replace the currently-glowing set on the next microtask, batching
+        // all synchronous calls into one union. Under current Zoom behavior
+        // a filter response triggers exactly one event (the first matching
+        // filter wins), so `runInjection` only ever calls eventClick once
+        // per injection and the batching is effectively a no-op. It's kept
+        // as a forward guard: if Zoom ever allows a filter's `trigger` to be
+        // an array, this code already lights up every fired event's commands
+        // together instead of just the last one — no logic change needed.
+        setShining(keys) {
+            if (!this._shineBatch) {
+                this._shineBatch = new Set();
+                queueMicrotask(() => {
+                    this.firingTargets = this._shineBatch;
+                    this._shineBatch = null;
+                });
+            }
+            for (const k of keys) this._shineBatch.add(k);
+        },
+        // Fire the one-shot border bolt for a single key. Re-firing while the
+        // class is still applied requires removing it, waiting one tick for
+        // the DOM to drop the class, then re-adding — otherwise Vue sees no
+        // change and the CSS animation doesn't replay.
+        async pulseShine(kind, id) {
+            const key = `${kind}:${id}`;
+            if (this.pulsingTargets.has(key)) {
+                this.pulsingTargets.delete(key);
+                await this.$nextTick();
+            }
+            this.pulsingTargets.add(key);
+            setTimeout(() => this.pulsingTargets.delete(key), 500);
+        },
+        zoomClick(adapter, port, method, param) {
+            const ref = this.controlRef(port, method, param);
             this.target = ref;
             const fc = formatCommand(adapter, port, method, param);
             this.commands = [{ ref, address: fc.address, command: fc.command }];
             this.logTrigger('control', ref, this.commands);
+            this.setShining([`control:${ref}`]);
+            this.pulseShine('control', ref);
         },
         sceneClick(scene) {
             this.target = scene.id;
             this.commands = scene.resolvedCommands;
             this.logTrigger('scene', scene.name || scene.id, this.commands);
+            this.shineCommands(this.commands);
         },
         eventClick(rule) {
             this.target = rule.event;
             this.commands = rule.commands;
             this.logTrigger('event', this.eventLabel(rule.event), this.commands);
+            this.shineCommands(this.commands);
+        },
+        // Light up every control button whose ref appears in the given
+        // resolved-command list. Used by scene clicks, event clicks, and
+        // filter-response dispatches — the underlying zoom controls glow
+        // (persistent) and pulse (one-shot), not the trigger button itself.
+        shineCommands(commands) {
+            const items = Array.isArray(commands)
+                ? commands.filter((c) => c && c.ref && !c.error)
+                : [];
+            this.setShining(items.map((c) => `control:${c.ref}`));
+            for (const cmd of items) {
+                this.pulseShine('control', cmd.ref);
+            }
         },
         eventLabel,
         onResize(name, panes) {
@@ -1713,6 +1844,14 @@ export default {
                 return null;
             }
         },
+        schemaSourceStatus() {
+            return schemaState.status;
+        },
+        schemaSourceTitle() {
+            // Only the local-fallback chip is rendered, so this only needs
+            // to describe that case.
+            return `Remote schema fetch failed (${schemaState.error || 'unknown error'}). Using the bundled fallback schema.`;
+        },
         hasHiddenContent() {
             const ctrl = this.calculatedControls;
             if (!ctrl) return false;
@@ -1823,6 +1962,87 @@ export default {
 
 $zoom-panel-width: 666px;
 $zoom-button-height: 58px;
+
+// `--shine-color` is shared by both the transient border-bolt and the
+// persistent glow. Light preview uses the brand accent (visible against
+// white port cards); dark preview swaps to white so both effects read
+// against #1a1a1a.
+#preview {
+    --shine-color: #{c.$accent};
+
+    &.dark-preview {
+        --shine-color: #ffffff;
+    }
+}
+
+// Border-bolt machinery: `@property` registration is what lets the
+// conic-gradient angle and arc color interpolate inside @keyframes.
+@property --shine-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+}
+@property --shine-arc {
+    syntax: '<color>';
+    inherits: false;
+    initial-value: transparent;
+}
+@keyframes shine-sweep {
+    0%   { --shine-angle: 0deg;   --shine-arc: transparent; }
+    25%  { --shine-arc: var(--shine-color, #ffffff); }
+    75%  { --shine-arc: var(--shine-color, #ffffff); }
+    100% { --shine-angle: 360deg; --shine-arc: transparent; }
+}
+
+// Two stacked effects on .btn-zoom controls when their command fires:
+//   .shine-pulse  → one-shot border bolt sweeps once at trigger time
+//   .shine        → persistent glow that stays until the next activity
+// The pulse uses a pseudo-element ring (mask trick) so the host button's
+// own border/background stay untouched. The glow is a directionless
+// box-shadow on the button itself, transitioned for a smooth crossfade
+// when the active set changes.
+.btn-zoom {
+    position: relative;
+    transition: box-shadow 0.4s ease;
+
+    &.shine {
+        box-shadow: 0 0 10px 1px var(--shine-color);
+    }
+
+    &.shine-pulse::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border: 2px solid transparent;
+        border-radius: inherit;
+        background:
+            conic-gradient(
+                from var(--shine-angle),
+                transparent 0%,
+                var(--shine-arc) 3%,
+                transparent 15%
+            ) border-box;
+        -webkit-mask:
+            linear-gradient(#fff 0 0) padding-box,
+            linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+                mask-composite: exclude;
+        pointer-events: none;
+        animation: shine-sweep 0.5s ease-in 1;
+    }
+
+    // Honour the OS-level reduced-motion preference: drop the sweep entirely
+    // and snap the glow on/off instead of crossfading. The glow itself still
+    // shows, so the user keeps the "last triggered" feedback without the
+    // moving elements that reduced-motion is meant to suppress.
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+
+        &.shine-pulse::after {
+            display: none;
+        }
+    }
+}
 
 // Wrapper around the outer Splitpanes. It exists purely so we have a stable
 // DOM element to hang the fullscreen-toggle class on — class fallthrough onto
@@ -2039,6 +2259,29 @@ $zoom-button-height: 58px;
         flex-direction: row;
         align-items: center;
         gap: 0.4rem;
+    }
+
+    // Subtle persistent chip showing which schema copy the editor is using.
+    // Sits to the left of the warnings/theme/log buttons in the toolbar.
+    // Neutral styling so it reads as environment status, not a problem to fix.
+    .schema-source-chip {
+        font-size: 0.72rem;
+        line-height: 1.4;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        color: rgba(0, 0, 0, 0.55);
+        background: transparent;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+        user-select: none;
+        white-space: nowrap;
+
+        &.schema-local-fallback {
+            // Slightly warm tint to flag that we're not on the live copy,
+            // without screaming "error" — the warning lives in the log.
+            border-color: rgba(217, 119, 6, 0.45);
+            color: #92400e;
+        }
     }
 
     .btn-warnings-toggle {

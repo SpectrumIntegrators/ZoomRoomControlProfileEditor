@@ -12,6 +12,7 @@
     "dependencies": {
         "@codemirror/lang-json": "^6.0.2",
         "ajv": "^8.17.1",
+        "ajv-formats": "^3.0.1",
         "codemirror": "^6.0.2",
         "codemirror-json-schema": "^0.8.1",
         "html-to-image": "^1.11.13",

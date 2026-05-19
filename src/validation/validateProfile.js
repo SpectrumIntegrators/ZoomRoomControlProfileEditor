@@ -1,4 +1,5 @@
 import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
 import { schemaState } from './schemaLoader';
 import { BUILTIN_EVENT_SET, BUILTIN_EVENT_BY_ID } from '@/data/builtinEvents';
 
@@ -10,6 +11,10 @@ function getValidator() {
         return cachedValidator;
     }
     const ajv = new Ajv({ allErrors: true, strict: false });
+    // Registers the standard JSON Schema formats (uri, email, date-time, uuid,
+    // regex, etc.) so any `"format": "..."` declarations in the schema are
+    // actually validated instead of silently skipped with a warning.
+    addFormats(ajv);
     cachedValidator = ajv.compile(schemaState.schema);
     cachedSchema = schemaState.schema;
     return cachedValidator;
