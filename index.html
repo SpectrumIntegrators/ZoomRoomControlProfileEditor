@@ -20,56 +20,79 @@
 
         <!-- ===== TEMPORARY domain-move banner — remove this whole block after the .com cutover ===== -->
         <style>
+            @keyframes dm-pulse {
+                0%, 100% { background-color: #c03221; }
+                50% { background-color: #e8432e; }
+            }
             #dm-banner {
                 position: fixed;
                 left: 0;
                 right: 0;
-                bottom: 0;
+                top: 60px; /* sits directly below the 60px app header (nav) */
                 z-index: 9999;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 0.75rem;
+                gap: 0.6rem;
                 flex-wrap: wrap;
-                padding: 0.7rem 3rem 0.7rem 1rem;
-                background: #462444;
+                padding: 1.1rem 3.75rem 1.1rem 1.25rem;
+                background: #c03221;
                 color: #fff;
                 font-family: 'Lato', sans-serif;
-                font-size: 0.9rem;
+                font-size: 1.2rem;
+                font-weight: 700;
                 line-height: 1.4;
                 text-align: center;
-                box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.25);
+                letter-spacing: 0.2px;
+                box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+                border-bottom: 3px solid rgba(0, 0, 0, 0.3);
+                animation: dm-pulse 1.5s ease-in-out infinite;
+            }
+            #dm-banner .dm-icon {
+                font-size: 1.5rem;
+                line-height: 1;
             }
             #dm-banner a {
                 color: #fff;
                 text-decoration: underline;
-                text-underline-offset: 2px;
-                font-weight: 700;
+                text-underline-offset: 3px;
+                text-decoration-thickness: 2px;
+                font-weight: 800;
                 white-space: nowrap;
+                padding: 0 0.15rem;
+            }
+            #dm-banner a:hover {
+                background: rgba(255, 255, 255, 0.2);
             }
             #dm-banner-close {
                 position: absolute;
-                right: 0.75rem;
+                right: 1rem;
                 top: 50%;
                 transform: translateY(-50%);
-                background: transparent;
-                border: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 2rem;
+                height: 2rem;
+                padding: 0;
+                background: rgba(0, 0, 0, 0.25);
+                border: 2px solid rgba(255, 255, 255, 0.65);
+                border-radius: 50%;
                 color: #fff;
-                font-size: 1.4rem;
+                font-size: 1.3rem;
                 line-height: 1;
                 cursor: pointer;
-                padding: 0.25rem 0.5rem;
-                opacity: 0.8;
             }
             #dm-banner-close:hover {
-                opacity: 1;
+                background: rgba(0, 0, 0, 0.5);
             }
         </style>
-        <div id="dm-banner" role="status" hidden>
+        <div id="dm-banner" role="alert">
+            <span class="dm-icon" aria-hidden="true">&#9888;&#65039;</span>
             <span>
-                This tool is moving to
+                Heads up! This tool is moving to
                 <a href="https://zoom.spectrumintegrators.com">zoom.spectrumintegrators.com</a>
-                on <strong>July&nbsp;1,&nbsp;2026</strong>. Please update your bookmarks.
+                on July&nbsp;1,&nbsp;2026 &mdash; update your bookmarks now!
             </span>
             <button id="dm-banner-close" type="button" aria-label="Dismiss">&times;</button>
         </div>
@@ -77,14 +100,21 @@
             (function () {
                 var KEY = 'dm-banner-dismissed';
                 var banner = document.getElementById('dm-banner');
+                function hide() {
+                    // Inline style beats the #dm-banner { display: flex } rule,
+                    // unlike the [hidden] attribute which it would override.
+                    banner.style.display = 'none';
+                }
                 try {
-                    if (localStorage.getItem(KEY) === '1') return;
+                    if (localStorage.getItem(KEY) === '1') {
+                        hide();
+                        return;
+                    }
                 } catch (e) {
                     /* localStorage blocked — just show the banner */
                 }
-                banner.hidden = false;
                 document.getElementById('dm-banner-close').addEventListener('click', function () {
-                    banner.hidden = true;
+                    hide();
                     try {
                         localStorage.setItem(KEY, '1');
                     } catch (e) {
