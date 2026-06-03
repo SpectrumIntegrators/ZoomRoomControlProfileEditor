@@ -106,17 +106,19 @@
                     banner.style.display = 'none';
                 }
                 try {
-                    if (localStorage.getItem(KEY) === '1') {
+                    // sessionStorage: dismissal survives reloads but is cleared
+                    // when the tab closes, so the banner returns on a fresh visit.
+                    if (sessionStorage.getItem(KEY) === '1') {
                         hide();
                         return;
                     }
                 } catch (e) {
-                    /* localStorage blocked — just show the banner */
+                    /* sessionStorage blocked — just show the banner */
                 }
                 document.getElementById('dm-banner-close').addEventListener('click', function () {
                     hide();
                     try {
-                        localStorage.setItem(KEY, '1');
+                        sessionStorage.setItem(KEY, '1');
                     } catch (e) {
                         /* ignore */
                     }
