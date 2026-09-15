@@ -124,6 +124,143 @@ function friendlyPath(instancePath, json) {
     return out.join(' / ');
 }
 
+// ----- Pattern-failure diagnosis -----------------------------------------
+// A bare "doesn't match the pattern" is useless for the fields users actually
+// type by hand — adapter addresses above all. Work out *which* part of the
+// value is wrong (missing scheme, missing port, public IP, bad hostname) and
+// say that instead. Falls back to the schema's `patternExample` prose, and
+// only then to the generic message.
+
+function valueAtPointer(json, pointer) {
+    if (!pointer) return json;
+    let cur = json;
+    for (const raw of pointer.split('/').slice(1)) {
+        if (cur === null || typeof cur !== 'object') return undefined;
+        const seg = raw.replace(/~1/g, '/').replace(/~0/g, '~');
+        cur = Array.isArray(cur) ? cur[Number(seg)] : cur[seg];
+    }
+    return cur;
+}
+
+// `err.schemaPath` looks like '#/definitions/genericNetworkUrl/pattern'. Walk
+// it against the live schema and hand back the object that owns the failing
+// keyword, so we can read its `patternExample`.
+function schemaForError(schemaPath) {
+    if (typeof schemaPath !== 'string' || schemaPath[0] !== '#') return null;
+    const segs = schemaPath.slice(1).split('/').filter(Boolean);
+    segs.pop();
+    let cur = schemaState.schema;
+    for (const raw of segs) {
+        if (!cur || typeof cur !== 'object') return null;
+        cur = cur[raw.replace(/~1/g, '/').replace(/~0/g, '~')];
+    }
+    return cur && typeof cur === 'object' ? cur : null;
+}
+
+const IPV4_SHAPE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+// RFC 1123 hostname: LDH labels, each starting and ending alphanumeric.
+const HOSTNAME_SHAPE =
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+const PUBLIC_IP_NOTE =
+    'Zoom rejects profiles containing public IPs (ZRCSErrorCode_IP_Is_Public)';
+const RFC1918_HINT = 'an RFC 1918 address (10.x, 172.16-31.x, or 192.168.x)';
+
+function ipv4Octets(s) {
+    if (!IPV4_SHAPE.test(s)) return null;
+    const parts = s.split('.').map(Number);
+    return parts.every((n) => n >= 0 && n <= 255) ? parts : null;
+}
+function isPrivateIpv4(o) {
+    return (
+        o[0] === 10 ||
+        (o[0] === 172 && o[1] >= 16 && o[1] <= 31) ||
+        (o[0] === 192 && o[1] === 168)
+    );
+}
+
+// Each of these returns a sentence fragment naming the single most likely
+// problem, or null when that part of the value is fine.
+function hostProblem(host) {
+    if (!host) return 'the host is empty';
+    if (host === '255.255.255.255') return null; // limited broadcast, allowed
+    const octets = ipv4Octets(host);
+    if (octets) {
+        return isPrivateIpv4(octets)
+            ? null
+            : `'${host}' is a public IP — ${PUBLIC_IP_NOTE}. Use ${RFC1918_HINT} or a hostname`;
+    }
+    if (/^[\d.]+$/.test(host)) {
+        return `'${host}' looks like an IP address but isn't a valid one`;
+    }
+    if (host.includes('_')) {
+        return `hostname '${host}' contains an underscore — hostnames allow letters, digits, hyphens, and dots only`;
+    }
+    if (!HOSTNAME_SHAPE.test(host)) {
+        return `'${host}' isn't a usable hostname — letters, digits, hyphens, and dots only, and every label must start and end with a letter or digit`;
+    }
+    return null;
+}
+function portProblem(port) {
+    if (!/^\d+$/.test(port)) return `port '${port}' isn't a number`;
+    const n = Number(port);
+    if (n < 1 || n > 65535) return `port ${n} is out of range (1-65535)`;
+    return null;
+}
+function splitHostPort(rest) {
+    const i = rest.lastIndexOf(':');
+    if (i < 0) return null;
+    return { host: rest.slice(0, i), port: rest.slice(i + 1) };
+}
+function hostPortProblem(hp) {
+    return hostProblem(hp.host) || portProblem(hp.port);
+}
+
+function diagnoseGenericNetworkUrl(value) {
+    if (typeof value !== 'string' || !value) return null;
+    const m = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([\s\S]*)$/.exec(value);
+    if (!m) {
+        // No scheme at all — the most common mistake by far. When the rest of
+        // the value is already a usable host:port, hand back the exact string
+        // the user should have typed rather than describing the grammar.
+        const hp = splitHostPort(value);
+        if (!hp) {
+            return `missing the 'tcp://' or 'udp://' prefix and the ':<port>' suffix — e.g. 'tcp://${value}:<port>'`;
+        }
+        const problem = hostPortProblem(hp);
+        return problem
+            ? `missing the 'tcp://' or 'udp://' prefix, and ${problem}`
+            : `missing the 'tcp://' or 'udp://' prefix — use 'tcp://${value}' (or 'udp://${value}')`;
+    }
+    const scheme = m[1];
+    const rest = m[2];
+    if (scheme !== 'tcp' && scheme !== 'udp') {
+        return `'${scheme}://' isn't a supported scheme — use 'tcp://' or 'udp://'`;
+    }
+    const hp = splitHostPort(rest);
+    if (!hp) return `missing the ':<port>' suffix — use '${scheme}://${rest}:<port>'`;
+    return hostPortProblem(hp);
+}
+
+function diagnosePrivateIpv4(value) {
+    if (typeof value !== 'string' || !value) return null;
+    const m = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([\s\S]*)$/.exec(value);
+    if (m) {
+        const extra = /:\d+$/.test(m[2]) ? " and the ':<port>' suffix" : '';
+        return `iTach adapters take a bare IP address, not a URL — drop the '${m[1]}://' prefix${extra}`;
+    }
+    const octets = ipv4Octets(value);
+    if (octets) {
+        return isPrivateIpv4(octets)
+            ? null
+            : `'${value}' is a public IP — ${PUBLIC_IP_NOTE}. iTach adapters must sit on ${RFC1918_HINT}`;
+    }
+    if (/^[\d.]+$/.test(value)) return `'${value}' isn't a valid IPv4 address`;
+    if (HOSTNAME_SHAPE.test(value)) {
+        return `iTach adapters are addressed by IP, not by name — '${value}' is a hostname; use the device's RFC 1918 address (e.g. 192.168.1.50)`;
+    }
+    return null;
+}
+
 function definitionNameFromSchemaPath(schemaPath) {
     const m = /#\/definitions\/([^/]+)\//.exec(schemaPath || '');
     return m ? m[1] : null;
@@ -140,6 +277,20 @@ function formatSchemaError(err, json) {
             return `${path} must be one of: ${err.params.allowedValues.join(', ')}`;
         case 'pattern': {
             const defName = definitionNameFromSchemaPath(err.schemaPath);
+            const value = valueAtPointer(json, err.instancePath);
+            const detail =
+                defName === 'genericNetworkUrl'
+                    ? diagnoseGenericNetworkUrl(value)
+                    : defName === 'privateIpv4'
+                      ? diagnosePrivateIpv4(value)
+                      : null;
+            if (detail) return `${path} — ${detail}.`;
+            // No field-specific diagnosis: fall back to the schema's own
+            // prose example, which still beats the raw regex.
+            const owner = schemaForError(err.schemaPath);
+            if (owner && owner.patternExample) {
+                return `${path} doesn't match the required format — expected ${owner.patternExample}.`;
+            }
             return defName
                 ? `${path} does not match the required format (${defName})`
                 : `${path} does not match the required format`;
@@ -852,6 +1003,67 @@ function runOverlappingRulesValidation(json) {
     return errors;
 }
 
+// Zoom's per-model port ceilings. The iTach numbers come straight out of the
+// parser's own log strings (`must config 1 device` for IP2SL, `must config
+// 1-3 device` for IP2CC — see doc/zrcs-internals.md). IP2CC's three slots are
+// its three relays, so a 3-relay IP2CC adapter is legitimate and must not
+// warn. The other two models carry no documented limit, but a Zoom Room has
+// been observed rejecting profiles that hang more than one port off a single
+// adapter — so those get the softer, observation-based wording.
+const MAX_PORTS_BY_MODEL = {
+    iTachIP2SL: 1,
+    iTachIP2CC: 3,
+    GenericNetworkAdapter: 1,
+    USB2Serial: 1,
+};
+// For the documented models the remedy follows from the hardware, not from
+// JSON shape: an IP2SL has one physical COM port and an IP2CC has three
+// physical relays, so "split across adapters sharing an address" — the
+// right advice for a GenericNetworkAdapter endpoint fronting several logical
+// devices — is meaningless for either iTach.
+const PORT_LIMIT_REASON = {
+    iTachIP2SL: {
+        why: 'Zoom\'s IP2SL parser logs "must config 1 device" and takes exactly one port per adapter',
+        fix: 'An IP2SL has a single serial port, so give each physical iTach its own adapter entry at its own address.',
+    },
+    iTachIP2CC: {
+        why: 'Zoom\'s IP2CC parser logs "must config 1-3 device" and takes at most three relays per adapter',
+        fix: 'An IP2CC has three relays — each one is a port on this same adapter with a distinct position of 1, 2, or 3.',
+    },
+};
+const OBSERVED_PORT_LIMIT =
+    'Zoom Rooms has been observed rejecting profiles that put more than one port on a single adapter';
+
+// Advisory only — the profile is schema-valid and renders fine here. We warn
+// rather than reject because the evidence is a field observation, not a
+// string in the parser, and we don't want to block a config that a future
+// Zoom build might accept.
+function runMultiPortAdapterValidation(json) {
+    const errors = [];
+    if (!json || !Array.isArray(json.adapters)) return errors;
+    json.adapters.forEach((adapter, ai) => {
+        if (!adapter || !Array.isArray(adapter.ports)) return;
+        const max = MAX_PORTS_BY_MODEL[adapter.model];
+        const limit = max == null ? 1 : max;
+        if (adapter.ports.length <= limit) return;
+        const pointer = `/adapters/${ai}`;
+        const where = friendlyPath(pointer, json);
+        const n = adapter.ports.length;
+        // Documented limits get flat wording; the observation-based ones stay
+        // conditional, since we've only seen the rejection, not the check.
+        const known = PORT_LIMIT_REASON[adapter.model];
+        const message = known
+            ? `${where} defines ${n} ports on one adapter. The JSON is schema-valid, but ${known.why}, so Zoom will reject this profile at load. ${known.fix}`
+            : `${where} defines ${n} ports on one adapter. The JSON is valid and the profile renders here, but ${OBSERVED_PORT_LIMIT}. If Zoom rejects the profile, that is the likely cause. Split them across separate adapters — several adapters may share one address, which Zoom accepts.`;
+        errors.push({
+            source: 'adapter-port-count',
+            pointer,
+            path: where,
+            message,
+        });
+    });
+    return errors;
+}
 function runQuirkValidation(/* rawText, json */) {
     // No quirks at this layer right now. The previous "empty rules must be
     // literally [] with no whitespace" check turned out to be based on a
@@ -949,6 +1161,7 @@ export function validateProfile(rawText, json) {
         ...runSerialSettingsValidation(json),
         ...runResponseFilterValidation(json),
         ...runOverlappingRulesValidation(json),
+        ...runMultiPortAdapterValidation(json),
     ];
 
     const schemaErrors = runSchemaValidation(json);

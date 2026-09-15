@@ -129,16 +129,18 @@
         },
         "ip": {
           "type": "string",
-          "description": "For iTach adapters: a private IPv4 address (RFC 1918 only \u2014 e.g. '10.100.87.43', '192.168.1.50'). For GenericNetworkAdapter: a URL of the form 'tcp://<private-ipv4>:<port>' or 'udp://<private-ipv4>:<port>'. Hostnames are not allowed; public IPs are rejected by Zoom."
+          "description": "For iTach adapters: a bare private IPv4 address (RFC 1918 only — e.g. '10.100.87.43', '192.168.1.50'); hostnames are not accepted here. For GenericNetworkAdapter: a full URL of the form 'tcp://<host>:<port>' or 'udp://<host>:<port>' — the scheme and the port are both required, and <host> may be a private IPv4 address, 255.255.255.255, or a hostname (e.g. 'tcp://cp4address:60000'). Public IPs are rejected by Zoom in either case."
         },
         "uuid": {
           "type": "string",
           "description": "iTach beacon UUID (e.g. 'GlobalCache_000C1E051AEE'). Optional — Zoom Rooms parses the field but doesn't use it for anything; the IP is what's required at connect time. Provided here for traceability / future-proofing if Zoom ever adds UUID-based discovery. Format is 'GlobalCache_' followed by the device's 12-hex-digit MAC.",
+          "patternExample": "'GlobalCache_' followed by the device's 12-digit hex MAC, e.g. GlobalCache_000C1E051AEE",
           "pattern": "^GlobalCache_[0-9A-Fa-f]{12}$"
         },
         "com": {
           "type": "string",
           "description": "USB2Serial port identifier on the Zoom Room host. Windows: 'COM<n>' (e.g. 'COM3'). macOS: a '/dev/cu.*' device path (e.g. '/dev/cu.PL2303G-USBtoUART2110' — find via 'ls -al /dev/cu.*'). Required for USB2Serial adapters; not used by other models.",
+          "patternExample": "'COM<n>' on Windows (e.g. COM3), or a /dev/ device path on macOS (e.g. /dev/cu.usbserial-1420)",
           "pattern": "^(COM[0-9]+|/dev/[A-Za-z0-9._-]+)$"
         },
         "ports": {
@@ -318,11 +320,13 @@
     "privateIpv4": {
       "type": "string",
       "description": "IPv4 address in an RFC 1918 private range (10.0.0.0/8, 172.16.0.0/12, or 192.168.0.0/16). Zoom Rooms rejects profiles containing public IPs (ZRCSErrorCode_IP_Is_Public).",
+      "patternExample": "a private IPv4 address — 10.x.x.x, 172.16-31.x.x, or 192.168.x.x (e.g. 192.168.1.50)",
       "pattern": "^(10\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|172\\.(1[6-9]|2[0-9]|3[01])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|192\\.168\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))$"
     },
     "genericNetworkUrl": {
       "type": "string",
       "description": "GenericNetworkAdapter URL of the form 'tcp://<host>:<port>' or 'udp://<host>:<port>'. Host may be a private IPv4 address (RFC 1918), the limited broadcast address 255.255.255.255 (used for UDP broadcasts like Wake-on-LAN), or a hostname \u2014 Zoom Rooms supports all three in current software versions per the published docs and observed behavior. Anything else that looks like a numeric IP must fall in a private range; public IPs are rejected by Zoom (ZRCSErrorCode_IP_Is_Public). Port must be in the range 1-65535.",
+      "patternExample": "'tcp://<host>:<port>' or 'udp://<host>:<port>' — the scheme and the port are both required (e.g. tcp://192.168.1.50:23, or tcp://cp4address:60000 for a hostname)",
       "pattern": "^(tcp|udp)://(10\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|172\\.(1[6-9]|2[0-9]|3[01])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|192\\.168\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|255\\.255\\.255\\.255|(?![0-9.]+:)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*):(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3})$"
     },
     "iTachSerialSettings": {
@@ -457,6 +461,7 @@
         "id": {
           "type": "string",
           "description": "Device identifier referenced by commands, rules, scenes, and styles.",
+          "patternExample": "letters, digits, and underscores only (e.g. main_display)",
           "pattern": "^[A-Za-z0-9_]+$"
         },
         "name": {
@@ -507,6 +512,7 @@
         "id": {
           "type": "string",
           "description": "Method identifier, referenced as <deviceId>.<methodId> in commands.",
+          "patternExample": "letters, digits, and underscores only (e.g. power_on)",
           "pattern": "^[A-Za-z0-9_]+$"
         },
         "name": {
@@ -588,6 +594,7 @@
       "properties": {
         "id": {
           "type": "string",
+          "patternExample": "letters, digits, and underscores only (e.g. warm_up)",
           "pattern": "^[A-Za-z0-9_]+$"
         },
         "name": {
@@ -640,11 +647,13 @@
     "iconValue": {
       "type": "string",
       "description": "Either a built-in icon token (e.g. 'icon_projector' \u2014 Zoom built-ins all start with 'icon_') or an MDI reference of the form 'mdi:<icon_name>:<style_name>'. Allowed style_names are filled, outlined, rounded, sharp, two_tone (all lowercase, spaces in icon_name replaced with underscores).",
+      "patternExample": "a built-in token starting with 'icon_' (e.g. icon_projector), or 'mdi:<icon_name>:<style>' where style is filled, outlined, rounded, sharp, or two_tone (e.g. mdi:television:outlined)",
       "pattern": "^(icon_[A-Za-z0-9_]+|mdi:[A-Za-z0-9_]+:(filled|outlined|rounded|sharp|two_tone))$"
     },
     "commandRef": {
       "type": "string",
       "description": "Reference of the form '<deviceId>.<methodId>' (for type=action) or '<deviceId>.<methodId>.<paramId>' (for type=actions).",
+      "patternExample": "'<deviceId>.<methodId>' or '<deviceId>.<methodId>.<paramId>' (e.g. main_display.power.on)",
       "pattern": "^[A-Za-z0-9_]+\\.[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)?$"
     },
     "responseFilter": {
@@ -677,6 +686,7 @@
     "styleEntry": {
       "type": "string",
       "description": "Either the literal 'zr_event_only=true' or a documented dot-notation key=value override. Allowed forms (per Zoom docs and supplied examples):\n  \u2022 <deviceId>.main_method=<methodId> \u2014 set the main button on a device tile (device level only)\n  \u2022 <deviceId>.name=<displayName> \u2014 override the device's displayed name\n  \u2022 <deviceId>.<methodId>.name=<displayName> \u2014 override a method's displayed name\n  \u2022 <deviceId>.invisible=true|false \u2014 hide the entire device\n  \u2022 <deviceId>.<methodId>.invisible=true|false \u2014 hide a specific method\n  \u2022 <deviceId>.icon=<iconValue> \u2014 device-level icon\n  \u2022 <deviceId>.<methodId>.icon=<iconValue> \u2014 method-level icon\n  \u2022 <deviceId>.<methodId>.<paramId>.icon=<iconValue> \u2014 param-level icon\nIcon values must be either a built-in token (e.g. 'icon_projector' \u2014 Zoom built-ins all start with 'icon_') or an MDI reference of the form 'mdi:<icon_name>:<style_name>'. The style_name suffix is required despite the docs implying it is optional \u2014 Zoom Rooms shows no icon on web (or the default magic-wand fallback on iPad) when the variant is missing or unrecognized. Allowed style_names are filled, outlined, rounded, sharp, two_tone (all lowercase, spaces in icon_name replaced with underscores). Verified on Zoom Room 6.6.1.",
+      "patternExample": "'zr_event_only=true', or a dot-notation override such as main_display.name=Front TV, main_display.power.invisible=true, or main_display.icon=icon_tv",
       "pattern": "^(zr_event_only=true|[A-Za-z0-9_]+\\.main_method=.+|[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)?\\.name=.+|[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)?\\.invisible=.+|[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+){0,2}\\.icon=(icon_[A-Za-z0-9_]+|mdi:[A-Za-z0-9_]+:(filled|outlined|rounded|sharp|two_tone)))$"
     }
   }

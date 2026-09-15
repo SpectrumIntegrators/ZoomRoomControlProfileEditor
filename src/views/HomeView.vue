@@ -701,9 +701,50 @@ import { EDITOR_URL, todayIso, orderProfileKeys } from '@/config';
 import { Splitpanes, Pane } from 'splitpanes';
 import { eventLabel } from '@/data/zoomEvents';
 import { Codemirror } from 'vue-codemirror';
-import { json as cmJsonLang } from '@codemirror/lang-json';
-import { jsonSchema as cmJsonSchema } from 'codemirror-json-schema';
+import {
+    json as cmJsonLang,
+    jsonLanguage as cmJsonLanguage,
+    jsonParseLinter as cmJsonParseLinter,
+} from '@codemirror/lang-json';
+import {
+    jsonCompletion as cmJsonCompletion,
+    jsonSchemaLinter as cmJsonSchemaLinter,
+    jsonSchemaHover as cmJsonSchemaHover,
+    handleRefresh as cmHandleRefresh,
+    stateExtensions as cmStateExtensions,
+} from 'codemirror-json-schema';
+import { hoverTooltip as cmHoverTooltip } from '@codemirror/view';
+import { linter as cmLinter } from '@codemirror/lint';
 import { toBlob as htmlToBlob, getFontEmbedCSS as htmlGetFontEmbedCSS } from 'html-to-image';
+
+// Hover text for the JSON editor. Mirrors codemirror-json-schema's default,
+// minus one thing: the default appends the schema's raw `pattern` to the
+// tooltip, and for an adapter address that's 400 characters of alternation
+// nobody can read. The schema carries a `patternExample` written for humans
+// (see zrcs-profile.schema.json) — show that instead.
+function cmSchemaHoverTexts({ schema }, draft) {
+    let typeInfo = '';
+    for (const key of ['oneOf', 'anyOf', 'allOf']) {
+        if (!Array.isArray(schema[key])) continue;
+        const members = schema[key].map((s) => {
+            try {
+                const { data } = draft.resolveRef({ data: s, pointer: s.$ref });
+                return (data && (data.type || data.$ref)) || s.type || s.$ref;
+            } catch {
+                return s.type;
+            }
+        });
+        typeInfo = `${key}: ${members.filter(Boolean).join(' or ')}`;
+    }
+    if (schema.type) {
+        typeInfo = Array.isArray(schema.type) ? schema.type.join(' or ') : schema.type;
+    }
+    if (schema.$ref) typeInfo = ` Reference: ${schema.$ref}`;
+    if (schema.enum) typeInfo = `\`enum\`: ${schema.enum.join(' or ')}`;
+    if (schema.format) typeInfo += `\`format\`: ${schema.format}`;
+    if (schema.patternExample) typeInfo += `\`expected\`: ${schema.patternExample}`;
+    return { message: schema.description || '', typeInfo };
+}
 
 // Vite replacement for webpack's require.context. Eagerly imports every PNG
 // under zoom_icons/{dark,light}/ as a URL and indexes them by the filename
@@ -1831,7 +1872,19 @@ export default {
             // Read schemaState.version so this re-runs when the remote schema
             // is fetched and swapped in.
             schemaState.version;
-            return [cmJsonSchema(schemaState.schema), cmJsonLang()];
+            // Hand-rolled equivalent of codemirror-json-schema's bundled
+            // `jsonSchema()` helper, which takes no options — we need to pass
+            // a custom hover formatter (see cmSchemaHoverTexts).
+            return [
+                cmJsonLang(),
+                cmLinter(cmJsonParseLinter()),
+                cmLinter(cmJsonSchemaLinter(), { needsRefresh: cmHandleRefresh }),
+                cmJsonLanguage.data.of({ autocomplete: cmJsonCompletion() }),
+                cmHoverTooltip(
+                    cmJsonSchemaHover({ getHoverTexts: cmSchemaHoverTexts })
+                ),
+                cmStateExtensions(schemaState.schema),
+            ];
         },
         rawProfile() {
             // Parsed-but-not-transformed view of the profile, fed to the
